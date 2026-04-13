@@ -1,6 +1,6 @@
 import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { SteelClient } from "../steel-client.js";
+import { sessionDetails as baseSessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
   sleepWithSignal,
@@ -18,6 +18,7 @@ import {
 type WaitState = "attached" | "visible";
 type SessionLike = {
   id: string;
+  sessionViewerUrl?: string | null;
   waitForSelector?: (
     selector: string,
     options?: { state?: WaitState; timeout?: number }
@@ -37,8 +38,7 @@ const POLL_DELAY_MS = 100;
 
 function sessionDetails(session: SessionLike, url: string) {
   return {
-    sessionId: session.id,
-    sessionViewerUrl: `https://app.steel.dev/sessions/${session.id}`,
+    ...baseSessionDetails(session),
     url,
   };
 }

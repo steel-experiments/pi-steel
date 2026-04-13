@@ -46,19 +46,35 @@ pi -e .
 
 - Node.js 20+
 - A Pi runtime that supports extensions
-- `STEEL_API_KEY` exported in the environment
+- Steel authentication via either:
+  - `STEEL_API_KEY`, or
+  - `steel login` config in `~/.config/steel/config.json`
+- For self-hosted/local Steel, configure a custom base URL
 
 Optional runtime configuration:
 
+- `STEEL_BASE_URL`
+- `STEEL_BROWSER_API_URL`
+- `STEEL_LOCAL_API_URL`
+- `STEEL_API_URL`
+- `STEEL_CONFIG_DIR`
 - `STEEL_SESSION_TIMEOUT_MS`
 - `STEEL_TOOL_TIMEOUT_MS`
 - `STEEL_SOLVE_CAPTCHA`
 - `STEEL_USE_PROXY`
 - `STEEL_PROXY_URL`
+- `STEEL_SESSION_HEADLESS`
+- `STEEL_SESSION_REGION`
+- `STEEL_SESSION_PROFILE_ID`
+- `STEEL_SESSION_PERSIST_PROFILE`
+- `STEEL_SESSION_CREDENTIALS`
+- `STEEL_SESSION_NAMESPACE`
 - `STEEL_CAPTCHA_MAX_RETRIES`
 - `STEEL_CAPTCHA_WAIT_MS`
 - `STEEL_CAPTCHA_POLL_INTERVAL_MS`
 - `STEEL_NAVIGATE_RETRY_COUNT`
+
+`pi-steel` reads Steel CLI config for auth and local API resolution, and it normalizes CLI-style API URLs such as `http://localhost:3000/v1` to the SDK-compatible base URL form.
 
 ## Development
 

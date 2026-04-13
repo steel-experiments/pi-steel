@@ -34,7 +34,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:tools": "node --import tsx --test tests/tools.test.ts",
+    "test:tools": "node --import tsx --test tests/*.test.ts",
     "test": "npm run typecheck && npm run build && npm run test:tools",
     "prepublishOnly": "npm test && npm pack --dry-run"
   },

@@ -4,7 +4,7 @@ import path from "node:path";
 import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import type Steel from "steel-sdk";
-import type { SteelClient } from "../steel-client.js";
+import { sessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
   throwIfAborted,
@@ -19,6 +19,7 @@ type ComputerAction = SessionComputerParams["action"];
 
 type SessionLike = {
   id: string;
+  sessionViewerUrl?: string | null;
   computer?: (body: SessionComputerParams) => Promise<SessionComputerResponse>;
 };
 
@@ -50,13 +51,6 @@ const SUPPORTED_ACTIONS: readonly ComputerAction[] = [
   "take_screenshot",
   "get_cursor_position",
 ];
-
-function sessionDetails(session: SessionLike) {
-  return {
-    sessionId: session.id,
-    sessionViewerUrl: `https://app.steel.dev/sessions/${session.id}`,
-  };
-}
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);

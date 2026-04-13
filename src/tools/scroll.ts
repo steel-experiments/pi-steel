@@ -1,6 +1,6 @@
 import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { SteelClient } from "../steel-client.js";
+import { sessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
   throwIfAborted,
@@ -13,6 +13,7 @@ type ScrollDirection = "up" | "down";
 
 type SessionLike = {
   id: string;
+  sessionViewerUrl?: string | null;
   evaluate?: <T>(fn: (...args: any[]) => T, ...args: any[]) => Promise<T>;
   page?: {
     evaluate?: <T>(fn: (...args: any[]) => T, ...args: any[]) => Promise<T>;
@@ -54,13 +55,6 @@ function normalizeAmount(rawAmount?: number): number {
 
   const rounded = Math.trunc(parsed);
   return Math.max(MIN_SCROLL_AMOUNT, Math.min(rounded, MAX_SCROLL_AMOUNT));
-}
-
-function sessionDetails(session: SessionLike) {
-  return {
-    sessionId: session.id,
-    sessionViewerUrl: `https://app.steel.dev/sessions/${session.id}`,
-  };
 }
 
 function getSessionEvaluate(session: SessionLike): ((fn: (...args: any[]) => unknown, ...args: any[]) => Promise<unknown>) {

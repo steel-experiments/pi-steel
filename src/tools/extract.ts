@@ -1,6 +1,6 @@
 import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { SteelClient } from "../steel-client.js";
+import { sessionDetails as baseSessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
   throwIfAborted,
@@ -11,6 +11,7 @@ import {
 
 type SessionLike = {
   id: string;
+  sessionViewerUrl?: string | null;
   url?: (() => Promise<string> | string) | string;
   evaluate?: <T>(fn: (...args: any[]) => T, ...args: any[]) => Promise<T>;
   page?: {
@@ -240,8 +241,7 @@ function readSessionUrl(session: SessionLike): Promise<string> {
 
 function sessionDetails(session: SessionLike, url: string, scopeSelector: string | null) {
   return {
-    sessionId: session.id,
-    sessionViewerUrl: `https://app.steel.dev/sessions/${session.id}`,
+    ...baseSessionDetails(session),
     url,
     scopeSelector,
   };

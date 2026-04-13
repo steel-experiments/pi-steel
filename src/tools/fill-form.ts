@@ -1,6 +1,6 @@
 import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { SteelClient } from "../steel-client.js";
+import { sessionDetails, type SteelClient } from "../steel-client.js";
 import { runWithCaptchaRecovery, type CaptchaRecoverySummary } from "./captcha-guard.js";
 import {
   emitProgress,
@@ -17,6 +17,7 @@ import {
 
 type SessionLike = {
   id: string;
+  sessionViewerUrl?: string | null;
   captchasStatus?: () => Promise<unknown>;
   captchasSolve?: () => Promise<unknown>;
   waitForSelector?: (
@@ -61,13 +62,6 @@ type FieldResult = {
     waitTimedOut: boolean;
   };
 };
-
-function sessionDetails(session: SessionLike) {
-  return {
-    sessionId: session.id,
-    sessionViewerUrl: `https://app.steel.dev/sessions/${session.id}`,
-  };
-}
 
 function compactCaptchaRecovery(summary: CaptchaRecoverySummary) {
   return {

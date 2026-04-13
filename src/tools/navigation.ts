@@ -1,6 +1,6 @@
 import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { SteelClient } from "../steel-client.js";
+import { sessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
   throwIfAborted,
@@ -11,6 +11,7 @@ import {
 
 type SessionLike = {
   id: string;
+  sessionViewerUrl?: string | null;
   goBack?: () => Promise<unknown> | unknown;
   back?: () => Promise<unknown> | unknown;
   url?: (() => Promise<string> | string) | string;
@@ -53,13 +54,6 @@ async function readSessionTitle(session: SessionLike): Promise<string> {
   }
 
   return "unknown";
-}
-
-function sessionDetails(session: SessionLike) {
-  return {
-    sessionId: session.id,
-    sessionViewerUrl: `https://app.steel.dev/sessions/${session.id}`,
-  };
 }
 
 export function goBackTool(client: SteelClient): ToolDefinition<any, any> {

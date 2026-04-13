@@ -1,6 +1,6 @@
 import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { SteelClient } from "../steel-client.js";
+import { sessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
   throwIfAborted,
@@ -13,6 +13,7 @@ type WaitUntil = "load" | "domcontentloaded" | "networkidle";
 
 type SessionLike = {
   id: string;
+  sessionViewerUrl?: string | null;
   goto?: (
     url: string,
     options?: { waitUntil?: WaitUntil }
@@ -66,13 +67,6 @@ function normalizeUrl(rawUrl: string): string {
   } catch (error) {
     throw new Error(`Invalid URL: ${String(error instanceof Error ? error.message : "invalid URL")}`);
   }
-}
-
-function sessionDetails(session: SessionLike) {
-  return {
-    sessionId: session.id,
-    sessionViewerUrl: `https://app.steel.dev/sessions/${session.id}`,
-  };
 }
 
 function normalizeRetryCount(raw: string | undefined): number {

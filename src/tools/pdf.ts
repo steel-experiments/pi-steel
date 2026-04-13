@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import type { SteelClient } from "../steel-client.js";
+import { sessionDetails as baseSessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
   throwIfAborted,
@@ -14,6 +14,7 @@ import {
 
 type SessionLike = {
   id: string;
+  sessionViewerUrl?: string | null;
   pdf?: (options?: {
     path?: string;
     printBackground?: boolean;
@@ -37,8 +38,7 @@ const DEFAULT_PDF_OPTIONS = {
 
 function sessionDetails(session: SessionLike, url: string) {
   return {
-    sessionId: session.id,
-    sessionViewerUrl: `https://app.steel.dev/sessions/${session.id}`,
+    ...baseSessionDetails(session),
     url,
   };
 }

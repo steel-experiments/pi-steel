@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import Steel from "steel-sdk";
 import type {
   CaptchaSolveResponse,
@@ -17,6 +20,20 @@ type SessionScreenshotOptions = Parameters<Page["screenshot"]>[0];
 type SessionPdfOptions = Parameters<Page["pdf"]>[0];
 type SessionComputerParams = Steel.SessionComputerParams;
 type SessionComputerResponse = Steel.SessionComputerResponse;
+
+type SteelConfigFile = {
+  apiKey?: unknown;
+  browser?: {
+    apiUrl?: unknown;
+  } | null;
+} | null;
+
+type ResolvedSteelRuntimeConfig = {
+  apiKey: string | null;
+  baseURL?: string;
+  baseURLOverridden: boolean;
+  viewerBaseURL?: string;
+};
 
 export interface LiveSteelSession {
   id: string;
@@ -58,6 +75,8 @@ type TrackedSession = {
 };
 
 export interface SteelClientOptions {
+  apiKey?: string | null;
+  baseURL?: string;
   sessionTimeoutMs?: number;
   sessionCreateOptions?: Partial<SessionCreateOptions>;
 }
@@ -69,6 +88,206 @@ export interface SessionRefreshOptions {
 
 const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_ENV_VALUES = new Set(["0", "false", "no", "off"]);
+const DEFAULT_STEEL_BASE_URL = "https://api.steel.dev";
+const DEFAULT_STEEL_APP_URL = "https://app.steel.dev";
+
+function normalizeConfigDir(input: string | undefined): string {
+  const trimmed = input?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+
+  return path.join(os.homedir(), ".config", "steel");
+}
+
+function readSteelConfigFile(): SteelConfigFile {
+  const configPath = path.join(
+    normalizeConfigDir(process.env.STEEL_CONFIG_DIR),
+    "config.json"
+  );
+
+  try {
+    const contents = fs.readFileSync(configPath, "utf-8");
+    const parsed = JSON.parse(contents) as SteelConfigFile;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function normalizeSdkBaseURL(rawUrl: string): string {
+  const trimmed = rawUrl.trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    throw new Error("base URL must not be empty.");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch (error: unknown) {
+    throw toolError(
+      "SteelClient initialization",
+      `Invalid Steel base URL: ${error instanceof Error ? error.message : "invalid URL"}`
+    );
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw toolError(
+      "SteelClient initialization",
+      "Steel base URL must use http or https."
+    );
+  }
+
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  if (pathname === "/v1") {
+    parsed.pathname = "";
+  }
+
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+function resolveViewerBaseURL(baseURL: string | undefined, overridden: boolean): string | undefined {
+  if (!overridden || !baseURL) {
+    return DEFAULT_STEEL_APP_URL;
+  }
+
+  try {
+    const parsed = new URL(baseURL);
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "api.steel.dev" ||
+      host.endsWith(".steel.dev")
+    ) {
+      return DEFAULT_STEEL_APP_URL;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function resolveSteelRuntimeConfig(
+  apiKeyOverride?: string | null,
+  baseURLOverride?: string
+): ResolvedSteelRuntimeConfig {
+  const config = readSteelConfigFile();
+
+  const configApiKey = normalizeOptionalString(config?.apiKey);
+  const configBrowserApiUrl = normalizeOptionalString(config?.browser?.apiUrl);
+
+  const explicitApiKey = normalizeOptionalString(apiKeyOverride ?? undefined);
+  const envApiKey = normalizeOptionalString(process.env.STEEL_API_KEY);
+  const resolvedApiKey = explicitApiKey ?? envApiKey ?? configApiKey ?? null;
+
+  const explicitBaseURL = normalizeOptionalString(baseURLOverride);
+  const envBaseURL = normalizeOptionalString(process.env.STEEL_BASE_URL);
+  const envBrowserApiURL = normalizeOptionalString(process.env.STEEL_BROWSER_API_URL);
+  const envLocalApiURL = normalizeOptionalString(process.env.STEEL_LOCAL_API_URL);
+  const envApiURL = normalizeOptionalString(process.env.STEEL_API_URL);
+
+  const rawBaseURL =
+    explicitBaseURL ??
+    envBaseURL ??
+    envBrowserApiURL ??
+    envLocalApiURL ??
+    configBrowserApiUrl ??
+    envApiURL;
+
+  const normalizedBaseURL = rawBaseURL
+    ? normalizeSdkBaseURL(rawBaseURL)
+    : undefined;
+  const baseURLOverridden = normalizedBaseURL !== undefined;
+
+  if (!resolvedApiKey && !baseURLOverridden) {
+    throw toolError(
+      "SteelClient initialization",
+      "STEEL_API_KEY is required. Set it in the environment, run `steel login`, or configure a custom Steel base URL for self-hosted usage."
+    );
+  }
+
+  return {
+    apiKey: resolvedApiKey,
+    baseURL: normalizedBaseURL,
+    baseURLOverridden,
+    viewerBaseURL: resolveViewerBaseURL(normalizedBaseURL, baseURLOverridden),
+  };
+}
+
+function getSessionFieldString(
+  session: Record<string, unknown>,
+  keys: readonly string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = session[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+export function resolveSessionId(session: Record<string, unknown>): string | undefined {
+  return getSessionFieldString(session, ["id", "sessionId"]);
+}
+
+export function resolveSessionConnectURL(session: Record<string, unknown>): string | undefined {
+  return getSessionFieldString(session, [
+    "websocketUrl",
+    "wsUrl",
+    "connectUrl",
+    "cdpUrl",
+    "browserWSEndpoint",
+    "wsEndpoint",
+  ]);
+}
+
+export function resolveSessionViewerURL(
+  session: Record<string, unknown>,
+  viewerBaseURL?: string
+): string | undefined {
+  const explicit = getSessionFieldString(session, [
+    "sessionViewerUrl",
+    "viewerUrl",
+    "liveViewUrl",
+  ]);
+  if (explicit) {
+    return explicit;
+  }
+
+  const sessionId = resolveSessionId(session);
+  if (!sessionId || !viewerBaseURL) {
+    return undefined;
+  }
+
+  return `${viewerBaseURL.replace(/\/+$/, "")}/sessions/${sessionId}`;
+}
+
+export function sessionDetails(session: {
+  id: string;
+  sessionViewerUrl?: string | null;
+}) {
+  return {
+    sessionId: session.id,
+    sessionViewerUrl:
+      typeof session.sessionViewerUrl === "string"
+        ? session.sessionViewerUrl
+        : "",
+  };
+}
 
 function parseBooleanEnv(name: string): boolean | undefined {
   const raw = process.env[name];
@@ -118,11 +337,27 @@ function parseProxyUrlEnv(name: string): string | undefined {
   }
 }
 
+function parseStringEnv(name: string): string | undefined {
+  const raw = process.env[name];
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  const trimmed = raw.trim();
+  return trimmed || undefined;
+}
+
 function resolveSessionCreateOptionsFromEnv(): Partial<SessionCreateOptions> {
   const resolved: Partial<SessionCreateOptions> = {};
   const solveCaptcha = parseBooleanEnv("STEEL_SOLVE_CAPTCHA");
   const useProxy = parseBooleanEnv("STEEL_USE_PROXY");
   const proxyUrl = parseProxyUrlEnv("STEEL_PROXY_URL");
+  const headless = parseBooleanEnv("STEEL_SESSION_HEADLESS");
+  const persistProfile = parseBooleanEnv("STEEL_SESSION_PERSIST_PROFILE");
+  const useCredentials = parseBooleanEnv("STEEL_SESSION_CREDENTIALS");
+  const region = parseStringEnv("STEEL_SESSION_REGION");
+  const profileId = parseStringEnv("STEEL_SESSION_PROFILE_ID");
+  const namespace = parseStringEnv("STEEL_SESSION_NAMESPACE");
 
   if (solveCaptcha !== undefined) {
     resolved.solveCaptcha = solveCaptcha;
@@ -133,6 +368,24 @@ function resolveSessionCreateOptionsFromEnv(): Partial<SessionCreateOptions> {
   if (proxyUrl !== undefined) {
     resolved.proxyUrl = proxyUrl;
   }
+  if (headless !== undefined) {
+    resolved.headless = headless;
+  }
+  if (persistProfile !== undefined) {
+    resolved.persistProfile = persistProfile;
+  }
+  if (useCredentials) {
+    resolved.credentials = {};
+  }
+  if (region !== undefined) {
+    resolved.region = region;
+  }
+  if (profileId !== undefined) {
+    resolved.profileId = profileId;
+  }
+  if (namespace !== undefined) {
+    resolved.namespace = namespace;
+  }
 
   return resolved;
 }
@@ -141,22 +394,19 @@ export class SteelClient {
   private static readonly DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
   private readonly client: Steel;
-  private readonly apiKey: string;
+  private readonly apiKey: string | null;
   private readonly sessionTimeoutMs: number;
   private readonly sessionCreateOptions: Partial<SessionCreateOptions>;
+  private readonly viewerBaseURL?: string;
   private currentSession: TrackedSession | null = null;
   private readonly sessions = new Map<string, TrackedSession>();
   private creatingSession: Promise<TrackedSession> | null = null;
 
   constructor(apiKey?: string, options: SteelClientOptions = {}) {
-    const resolvedApiKey = (typeof apiKey === "string" ? apiKey : process.env.STEEL_API_KEY)?.trim();
-    if (!resolvedApiKey) {
-      throw toolError(
-        "SteelClient initialization",
-        "STEEL_API_KEY is required. Set it explicitly in the SteelClient constructor or via the environment variable."
-      );
-    }
-
+    const runtimeConfig = resolveSteelRuntimeConfig(
+      options.apiKey ?? apiKey,
+      options.baseURL
+    );
     const configuredTimeout =
       options.sessionTimeoutMs === undefined
         ? undefined
@@ -182,8 +432,12 @@ export class SteelClient {
       normalizedFallbackTimeout ??
       SteelClient.DEFAULT_SESSION_TIMEOUT_MS;
 
-    this.client = new Steel({ steelAPIKey: resolvedApiKey });
-    this.apiKey = resolvedApiKey;
+    this.client = new Steel({
+      steelAPIKey: runtimeConfig.apiKey,
+      baseURL: runtimeConfig.baseURL,
+    });
+    this.apiKey = runtimeConfig.apiKey;
+    this.viewerBaseURL = runtimeConfig.viewerBaseURL;
     this.sessionTimeoutMs = resolvedTimeout;
     this.sessionCreateOptions = {
       ...resolveSessionCreateOptionsFromEnv(),
@@ -309,9 +563,11 @@ export class SteelClient {
         blockAds: true,
       });
 
-      const websocketUrl = this.withApiKey(session.websocketUrl?.trim());
+      const websocketUrl = this.withApiKey(
+        resolveSessionConnectURL(session as unknown as Record<string, unknown>)
+      );
       if (!websocketUrl) {
-        throw new Error("Steel session did not include a websocketUrl.");
+        throw new Error("Steel session did not include a connect URL.");
       }
 
       const browser = await chromium.connectOverCDP(websocketUrl);
@@ -341,11 +597,16 @@ export class SteelClient {
     session: SessionMetadata,
     page: Page
   ): LiveSteelSession {
+    const sessionId =
+      resolveSessionId(session as unknown as Record<string, unknown>) ?? session.id;
+
     return {
-      id: session.id,
+      id: sessionId,
       sessionViewerUrl:
-        session.sessionViewerUrl ||
-        `https://app.steel.dev/sessions/${session.id}`,
+        resolveSessionViewerURL(
+          session as unknown as Record<string, unknown>,
+          this.viewerBaseURL
+        ) ?? "",
       debugUrl: session.debugUrl || "",
       page,
       goto: (url, options) => page.goto(url, options),
@@ -366,15 +627,18 @@ export class SteelClient {
       content: () => page.content(),
       screenshot: (options) => page.screenshot(options),
       pdf: (options) => page.pdf(options),
-      computer: (body) => this.client.sessions.computer(session.id, body),
-      captchasStatus: () => this.client.sessions.captchas.status(session.id),
-      captchasSolve: () => this.client.sessions.captchas.solve(session.id),
+      computer: (body) => this.client.sessions.computer(sessionId, body),
+      captchasStatus: () => this.client.sessions.captchas.status(sessionId),
+      captchasSolve: () => this.client.sessions.captchas.solve(sessionId),
     };
   }
 
   private withApiKey(websocketUrl?: string): string | null {
     if (!websocketUrl) {
       return null;
+    }
+    if (!this.apiKey) {
+      return websocketUrl;
     }
 
     try {
