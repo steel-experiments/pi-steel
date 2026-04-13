@@ -21,6 +21,8 @@ This package publishes the Steel extension as a reusable Pi package so it can be
 - `steel_go_back`
 - `steel_get_url`
 - `steel_get_title`
+- `steel_pin_session`
+- `steel_release_session`
 
 ## Install
 
@@ -40,6 +42,12 @@ For local development from this repo:
 
 ```bash
 pi -e .
+```
+
+For browser workflows that should continue across multiple prompts in the same Pi session, use:
+
+```bash
+STEEL_SESSION_MODE=session pi -e .
 ```
 
 ## Requirements
@@ -82,6 +90,11 @@ Session lifecycle modes:
 - `STEEL_SESSION_MODE=agent` keeps one Steel session for the whole Pi prompt and closes it after `agent_end`. This is the default.
 - `STEEL_SESSION_MODE=session` keeps the same Steel session alive until Pi switches or shuts down the current session.
 - `STEEL_SESSION_MODE=turn` closes the Steel session after each Pi turn. This is more aggressive and can break workflows that need multiple tool rounds inside one prompt.
+
+You can also change session persistence at runtime:
+
+- `steel_pin_session` keeps the current or next Steel browser session alive across prompts for the rest of the Pi session.
+- `steel_release_session` closes the current Steel browser immediately and resets runtime session handling back to the default mode from `STEEL_SESSION_MODE`.
 
 ## Development
 

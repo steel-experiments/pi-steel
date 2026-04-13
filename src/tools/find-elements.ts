@@ -8,6 +8,11 @@ import {
   withToolError,
   type ToolProgressUpdater,
 } from "./tool-runtime.js";
+import {
+  blankPageError,
+  isBlankPageUrl,
+  readSessionUrl,
+} from "./session-state.js";
 
 type SessionLike = {
   id: string;
@@ -17,6 +22,7 @@ type SessionLike = {
     evaluate?: <T>(fn: (...args: any[]) => T, ...args: any[]) => Promise<T>;
   };
   url?: (() => Promise<string> | string) | string;
+  getCurrentUrl?: () => Promise<string> | string;
 };
 
 type Candidate = {
@@ -50,20 +56,6 @@ function normalizeOptionalString(value?: string): string | null {
     return null;
   }
   return normalized;
-}
-
-async function readSessionUrl(session: SessionLike): Promise<string> {
-  const direct = session.url;
-  if (typeof direct === "string" && direct.trim()) {
-    return direct;
-  }
-  if (typeof direct === "function") {
-    const value = await direct.call(session);
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-  return "unknown";
 }
 
 function sessionDetails(session: SessionLike, url: string) {
@@ -286,6 +278,9 @@ export function findElementsTool(client: SteelClient): ToolDefinition<any, any> 
         )) as SessionLike;
         throwIfAborted(signal);
         const url = await readSessionUrl(session);
+        if (isBlankPageUrl(url)) {
+          throw blankPageError("discover page elements");
+        }
         const candidates = await withAbortSignal(
           discoverElements(session, {
             query,

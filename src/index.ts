@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
+import { resolveSessionMode, type SteelSessionMode } from "./session-mode.js";
 import { SteelClient } from "./steel-client.js";
 import { clickTool } from "./tools/click.js";
 import { computerTool } from "./tools/computer.js";
@@ -12,30 +13,14 @@ import { pdfTool } from "./tools/pdf.js";
 import { scrapeTool } from "./tools/scrape.js";
 import { screenshotTool } from "./tools/screenshot.js";
 import { scrollTool } from "./tools/scroll.js";
+import { pinSessionTool, releaseSessionTool } from "./tools/session-control.js";
 import { typeTool } from "./tools/type.js";
 import { waitTool } from "./tools/wait.js";
 
-type SteelSessionMode = "turn" | "agent" | "session";
-
-function resolveSessionMode(): SteelSessionMode {
-  const rawValue = process.env.STEEL_SESSION_MODE?.trim().toLowerCase();
-  if (!rawValue) {
-    return "agent";
-  }
-
-  if (rawValue === "turn" || rawValue === "agent" || rawValue === "session") {
-    return rawValue;
-  }
-
-  console.warn(
-    `[steel] unsupported STEEL_SESSION_MODE="${rawValue}", falling back to "agent"`
-  );
-  return "agent";
-}
-
 export default function steelExtension(pi: ExtensionAPI): void {
   const steelClient = new SteelClient();
-  const sessionMode = resolveSessionMode();
+  const defaultSessionMode = resolveSessionMode();
+  let sessionMode = defaultSessionMode;
   let closingSessions: Promise<void> | null = null;
 
   const closeSessions = async (reason: string) => {
@@ -55,6 +40,15 @@ export default function steelExtension(pi: ExtensionAPI): void {
     await closingSessions;
   };
 
+  const sessionController = {
+    getDefaultSessionMode: () => defaultSessionMode,
+    getSessionMode: () => sessionMode,
+    setSessionMode: (mode: SteelSessionMode) => {
+      sessionMode = mode;
+    },
+    closeSessions,
+  };
+
   const tools = [
     navigateTool(steelClient),
     scrapeTool(steelClient),
@@ -71,23 +65,25 @@ export default function steelExtension(pi: ExtensionAPI): void {
     goBackTool(steelClient),
     getUrlTool(steelClient),
     getTitleTool(steelClient),
+    pinSessionTool(steelClient, sessionController),
+    releaseSessionTool(steelClient, sessionController),
   ];
 
   for (const tool of tools) {
     pi.registerTool(tool);
   }
 
-  if (sessionMode === "turn") {
-    pi.on("turn_end", async () => {
+  pi.on("turn_end", async () => {
+    if (sessionMode === "turn") {
       await closeSessions("turn_end");
-    });
-  }
+    }
+  });
 
-  if (sessionMode === "agent") {
-    pi.on("agent_end", async () => {
+  pi.on("agent_end", async () => {
+    if (sessionMode === "agent") {
       await closeSessions("agent_end");
-    });
-  }
+    }
+  });
 
   // Defensive cleanup for interactive session switches/forks.
   pi.on("session_before_switch", async () => {

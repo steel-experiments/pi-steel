@@ -16,7 +16,9 @@ import { waitTool } from "../dist/tools/wait.js";
 import { extractTool } from "../dist/tools/extract.js";
 import { findElementsTool } from "../dist/tools/find-elements.js";
 import { scrollTool } from "../dist/tools/scroll.js";
+import { pinSessionTool, releaseSessionTool } from "../dist/tools/session-control.js";
 import { goBackTool, getUrlTool, getTitleTool } from "../dist/tools/navigation.js";
+import type { SteelSessionMode } from "../dist/session-mode.js";
 
 type MockToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -52,15 +54,20 @@ type MockSession = {
 
 type MockClient = {
   getOrCreateSession: () => Promise<MockSession>;
+  getCurrentSessionId?: () => string | null;
+  hasActiveSession?: () => boolean;
   refreshSession?: (
     options?: { useProxy?: boolean; proxyUrl?: string | null }
   ) => Promise<MockSession>;
   isProxyConfigured?: () => boolean;
+  closeAllSessions?: () => Promise<void>;
 };
 
 function createMockClient(session: MockSession): MockClient {
   return {
     getOrCreateSession: async () => session,
+    getCurrentSessionId: () => session.id,
+    hasActiveSession: () => true,
   };
 }
 
@@ -124,7 +131,7 @@ async function executeTool(tool: MockTool, params: Record<string, unknown>, sess
     goBack: goBackTool,
     getUrl: getUrlTool,
     getTitle: getTitleTool,
-  } as Record<string, typeof navigateTool>;
+  } as Record<string, unknown>;
 
   const boundTool =
     toolWithClient === actual.navigate
@@ -183,6 +190,8 @@ describe("Tool registration contracts", () => {
     "steel_go_back",
     "steel_get_url",
     "steel_get_title",
+    "steel_pin_session",
+    "steel_release_session",
   ];
 
   const requiredTopLevelParams: Record<string, string[]> = {
@@ -201,6 +210,8 @@ describe("Tool registration contracts", () => {
     steel_go_back: [],
     steel_get_url: [],
     steel_get_title: [],
+    steel_pin_session: [],
+    steel_release_session: [],
   };
 
   it("registers all tools in expected order", async () => {
@@ -238,7 +249,7 @@ describe("Tool registration contracts", () => {
     }
   });
 
-  it("uses agent-scoped cleanup by default", () => {
+  it("registers runtime cleanup hooks for turn, agent, and session boundaries", () => {
     const registeredEvents = withEnv("STEEL_API_KEY", "test-key", () =>
       withEnv("STEEL_SESSION_MODE", undefined, () => {
         const eventNames: string[] = [];
@@ -258,35 +269,64 @@ describe("Tool registration contracts", () => {
     );
 
     assert.deepEqual(registeredEvents, [
+      "turn_end",
       "agent_end",
       "session_before_switch",
       "session_shutdown",
     ]);
   });
 
-  it("supports session-scoped cleanup mode", () => {
-    const registeredEvents = withEnv("STEEL_API_KEY", "test-key", () =>
-      withEnv("STEEL_SESSION_MODE", "session", () => {
-        const eventNames: string[] = [];
-        steelExtension({
-          registerTool: () => {
-            return;
-          },
-          on: (eventName: string) => {
-            eventNames.push(eventName);
-          },
-          onShutdown: async () => {
-            return;
-          },
-        } as MockPiApi as never);
-        return eventNames;
-      })
+  it("registers explicit session control tools", async () => {
+    let mode: SteelSessionMode = "agent";
+    let closeCalls = 0;
+    const client: MockClient = {
+      getOrCreateSession: async () => ({ id: "session-1" }),
+      getCurrentSessionId: () => "session-1",
+      hasActiveSession: () => true,
+      closeAllSessions: async () => {
+        closeCalls += 1;
+      },
+    };
+
+    const controller = {
+      getDefaultSessionMode: () => "agent" as const,
+      getSessionMode: () => mode,
+      setSessionMode: (nextMode: SteelSessionMode) => {
+        mode = nextMode;
+      },
+      closeSessions: async () => {
+        closeCalls += 1;
+      },
+    };
+
+    const pin = pinSessionTool(client as never, controller);
+    const release = releaseSessionTool(client as never, controller);
+
+    const pinResult = await pin.execute(
+      "call-001",
+      {},
+      new AbortController().signal,
+      async () => {},
+      null
     );
 
-    assert.deepEqual(registeredEvents, [
-      "session_before_switch",
-      "session_shutdown",
-    ]);
+    assert.equal(mode, "session");
+    assert.match(pinResult.content[0].text, /Enabled Steel session persistence/i);
+    assert.match(pinResult.content[0].text, /Current session: session-1/i);
+    assert.equal(pinResult.details?.mode, "session");
+
+    const releaseResult = await release.execute(
+      "call-002",
+      {},
+      new AbortController().signal,
+      async () => {},
+      null
+    );
+
+    assert.equal(mode, "agent");
+    assert.equal(closeCalls, 1);
+    assert.match(releaseResult.content[0].text, /Released Steel session session-1/i);
+    assert.equal(releaseResult.details?.mode, "agent");
   });
 
   it("executes navigation tool with normalized URL and response contract", async () => {
@@ -507,6 +547,29 @@ describe("Tool registration contracts", () => {
     assert.equal(result.details?.maxChars, 200);
     assert.ok((result.content[0].text ?? "").includes("[truncated "));
     assert.ok((result.content[0].text ?? "").length <= 200);
+  });
+
+  it("supports short scrape excerpts below 200 characters", async () => {
+    const longText = "B".repeat(400);
+    const session: MockSession = {
+      id: "session-1",
+      content: async () => "<html><body>ignored</body></html>",
+      evaluate: async (_fn: unknown, input: unknown) => {
+        assert.equal(typeof input, "object");
+        return longText;
+      },
+    };
+
+    const { result } = await executeTool(
+      scrapeTool as unknown as MockTool,
+      { format: "text", maxChars: 150 },
+      session
+    );
+
+    assertTextResult(result);
+    assert.equal(result.details?.maxChars, 150);
+    assert.equal(result.details?.truncated, true);
+    assert.ok((result.content[0].text ?? "").length <= 150);
   });
 
   it("captures screenshot artifact and returns artifact path", async () => {
@@ -905,6 +968,101 @@ describe("Tool registration contracts", () => {
     const { result: titleResult } = await executeTool(getTitleTool as unknown as MockTool, {}, titleSession);
     assertTextResult(titleResult);
     assert.equal(titleResult.content[0].text, "Current title: Current Title");
+  });
+
+  it("recovers go_back when history navigation completes after a timeout", async () => {
+    let currentUrl = "https://news.ycombinator.com/";
+    const session: MockSession = {
+      id: "session-1",
+      url: async () => currentUrl,
+      goBack: async () => {
+        currentUrl = "https://example.com/";
+        throw new Error('page.goBack: Timeout 30000ms exceeded. Call log: waiting for navigation until "load"');
+      },
+    };
+
+    const { result } = await executeTool(goBackTool as unknown as MockTool, {}, session);
+    assertTextResult(result);
+    assert.equal(result.content[0].text, "Navigated back to https://example.com/");
+    assert.equal(result.details?.previousUrl, "https://news.ycombinator.com/");
+    assert.equal(result.details?.url, "https://example.com/");
+    assert.equal(result.details?.timeoutRecovered, true);
+  });
+
+  it("reports about:blank as a fresh session in get_url", async () => {
+    const session: MockSession = {
+      id: "session-1",
+      url: "about:blank",
+    };
+
+    const { result } = await executeTool(getUrlTool as unknown as MockTool, {}, session);
+    assertTextResult(result);
+    assert.match(result.content[0].text, /fresh Steel session/i);
+    assert.equal(result.details?.url, "about:blank");
+    assert.equal(result.details?.isFreshSession, true);
+  });
+
+  it("fails get_title on about:blank with continuity guidance", async () => {
+    const client = createMockClient({
+      id: "session-1",
+      url: "about:blank",
+      title: async () => "",
+    });
+    const tool = getTitleTool(client as never);
+
+    await assert.rejects(
+      () =>
+        tool.execute(
+          "call-001",
+          {},
+          new AbortController().signal,
+          async () => {},
+          null
+        ),
+      /about:blank.*STEEL_SESSION_MODE=session/i
+    );
+  });
+
+  it("fails scrape on about:blank with continuity guidance", async () => {
+    const client = createMockClient({
+      id: "session-1",
+      url: "about:blank",
+      content: async () => "<html><head></head><body></body></html>",
+    });
+    const tool = scrapeTool(client as never);
+
+    await assert.rejects(
+      () =>
+        tool.execute(
+          "call-001",
+          { format: "text" },
+          new AbortController().signal,
+          async () => {},
+          null
+        ),
+      /about:blank.*STEEL_SESSION_MODE=session/i
+    );
+  });
+
+  it("fails find_elements on about:blank with continuity guidance", async () => {
+    const client = createMockClient({
+      id: "session-1",
+      url: "about:blank",
+      evaluate: async () => [],
+    });
+    const tool = findElementsTool(client as never);
+
+    await assert.rejects(
+      () =>
+        tool.execute(
+          "call-001",
+          {},
+          new AbortController().signal,
+          async () => {},
+          null
+        ),
+      /about:blank.*STEEL_SESSION_MODE=session/i
+    );
   });
 
   it("fails on selector validation errors", async () => {

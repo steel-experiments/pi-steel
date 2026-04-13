@@ -8,52 +8,29 @@ import {
   withToolError,
   type ToolProgressUpdater,
 } from "./tool-runtime.js";
+import {
+  blankPageError,
+  describeBlankPage,
+  isBlankPageUrl,
+  readSessionTitle,
+  readSessionUrl,
+} from "./session-state.js";
 
 type SessionLike = {
   id: string;
   sessionViewerUrl?: string | null;
-  goBack?: () => Promise<unknown> | unknown;
-  back?: () => Promise<unknown> | unknown;
+  goBack?: (options?: { waitUntil?: "load" | "domcontentloaded" | "networkidle"; timeout?: number }) => Promise<unknown> | unknown;
+  back?: (options?: { waitUntil?: "load" | "domcontentloaded" | "networkidle"; timeout?: number }) => Promise<unknown> | unknown;
   url?: (() => Promise<string> | string) | string;
   title?: (() => Promise<string> | string) | string;
+  getCurrentUrl?: () => Promise<string> | string;
 };
 
-async function readSessionUrl(session: SessionLike): Promise<string> {
-  const current = session.url;
+const GO_BACK_TIMEOUT_MS = 10_000;
 
-  if (typeof current === "string") {
-    return current;
-  }
-
-  if (typeof current === "function") {
-    const value = await current.call(session);
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-
-  const getter = (session as { getCurrentUrl?: () => Promise<string> | string }).getCurrentUrl;
-  if (typeof getter === "function") {
-    const value = await getter.call(session);
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-
-  return "unknown";
-}
-
-async function readSessionTitle(session: SessionLike): Promise<string> {
-  const current = session.title;
-
-  if (typeof current === "function") {
-    const value = await current.call(session);
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-
-  return "unknown";
+function isTimeoutError(error: unknown): boolean {
+  const message = String(error instanceof Error ? error.message : error || "");
+  return /timed? ?out|timeout/i.test(message);
 }
 
 export function goBackTool(client: SteelClient): ToolDefinition<any, any> {
@@ -86,7 +63,37 @@ export function goBackTool(client: SteelClient): ToolDefinition<any, any> {
         }
 
         await emitProgress(onUpdate, "steel_go_back", "Returning to previous page");
-        await withAbortSignal(Promise.resolve(goBack.call(session)), signal);
+        let timeoutRecovered = false;
+
+        try {
+          await withAbortSignal(
+            Promise.resolve(
+              goBack.call(session, {
+                waitUntil: "domcontentloaded",
+                timeout: GO_BACK_TIMEOUT_MS,
+              })
+            ),
+            signal
+          );
+        } catch (error: unknown) {
+          const currentUrlAfterFailure = await readSessionUrl(session);
+          if (
+            isTimeoutError(error) &&
+            currentUrlAfterFailure !== "unknown" &&
+            currentUrlAfterFailure !== previousUrl &&
+            !isBlankPageUrl(currentUrlAfterFailure)
+          ) {
+            timeoutRecovered = true;
+            await emitProgress(
+              onUpdate,
+              "steel_go_back",
+              `History navigation completed after timeout; now at ${currentUrlAfterFailure}`
+            );
+          } else {
+            throw error;
+          }
+        }
+
         const currentUrl = await readSessionUrl(session);
         await emitProgress(onUpdate, "steel_go_back", `Returned to ${currentUrl}`);
 
@@ -99,6 +106,7 @@ export function goBackTool(client: SteelClient): ToolDefinition<any, any> {
             ...sessionDetails(session),
             previousUrl,
             url: currentUrl,
+            timeoutRecovered,
           },
         };
       }, signal);
@@ -128,12 +136,15 @@ export function getUrlTool(client: SteelClient): ToolDefinition<any, any> {
           signal
         )) as SessionLike;
         const url = await readSessionUrl(session);
+        const isFreshSession = isBlankPageUrl(url);
+        const text = isFreshSession ? describeBlankPage(url) : `Current URL: ${url}`;
 
         return {
-          content: [{ type: "text", text: `Current URL: ${url}` }],
+          content: [{ type: "text", text }],
           details: {
             ...sessionDetails(session),
             url,
+            isFreshSession,
           },
         };
       }, signal);
@@ -162,12 +173,17 @@ export function getTitleTool(client: SteelClient): ToolDefinition<any, any> {
           client.getOrCreateSession(),
           signal
         )) as SessionLike;
+        const url = await readSessionUrl(session);
+        if (isBlankPageUrl(url)) {
+          throw blankPageError("read the page title");
+        }
         const title = await readSessionTitle(session);
 
         return {
           content: [{ type: "text", text: `Current title: ${title}` }],
           details: {
             ...sessionDetails(session),
+            url,
             title,
           },
         };

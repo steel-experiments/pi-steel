@@ -499,6 +499,14 @@ export class SteelClient {
     return tracked.liveSession;
   }
 
+  getCurrentSessionId(): string | null {
+    return this.currentSession?.metadata.id ?? null;
+  }
+
+  hasActiveSession(): boolean {
+    return this.currentSession !== null;
+  }
+
   isProxyConfigured(): boolean {
     const { useProxy, proxyUrl } = this.sessionCreateOptions;
     if (typeof proxyUrl === "string" && proxyUrl.trim().length > 0) {

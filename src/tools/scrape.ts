@@ -8,10 +8,13 @@ import {
   withToolError,
   type ToolProgressUpdater,
 } from "./tool-runtime.js";
+import {
+  blankPageError,
+  isBlankPageUrl,
+  readSessionUrl,
+} from "./session-state.js";
 
 type ScrapeFormat = "html" | "markdown" | "text";
-
-type SessionGetter = (() => Promise<string> | string) | string;
 
 type SessionLike = {
   id: string;
@@ -22,13 +25,14 @@ type SessionLike = {
     content?: () => Promise<unknown>;
     evaluate?: <T>(fn: (...args: any[]) => T, ...args: any[]) => Promise<T>;
   };
-  url?: SessionGetter;
+  url?: (() => Promise<string> | string) | string;
+  getCurrentUrl?: () => Promise<string> | string;
 };
 
 const ALLOWED_FORMATS: readonly ScrapeFormat[] = ["html", "markdown", "text"];
 const DEFAULT_FORMAT: ScrapeFormat = "text";
 const DEFAULT_MAX_CHARS = 12_000;
-const MIN_MAX_CHARS = 200;
+const MIN_MAX_CHARS = 1;
 const MAX_MAX_CHARS = 200_000;
 
 function resolveFormat(rawFormat?: string): ScrapeFormat {
@@ -74,30 +78,6 @@ function normalizeSelector(selector?: string): string | undefined {
   }
 
   return trimmed;
-}
-
-async function readSessionUrl(session: SessionLike): Promise<string> {
-  const direct = session.url;
-  if (typeof direct === "string" && direct.trim()) {
-    return direct;
-  }
-
-  if (typeof direct === "function") {
-    const value = await direct.call(session);
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-
-  const getter = (session as { getCurrentUrl?: () => Promise<string> | string }).getCurrentUrl;
-  if (typeof getter === "function") {
-    const value = await getter.call(session);
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-
-  return "unknown";
 }
 
 function sessionDetails(session: SessionLike, url: string, format: ScrapeFormat, selector: string | undefined) {
@@ -393,6 +373,9 @@ export function scrapeTool(client: SteelClient): ToolDefinition<any, any> {
         )) as SessionLike;
         throwIfAborted(signal);
         const url = await readSessionUrl(session);
+        if (isBlankPageUrl(url)) {
+          throw blankPageError("scrape page content");
+        }
         await emitProgress(onUpdate, "steel_scrape", "Running extraction");
         const result = await withAbortSignal(
           scrapeContent(session, format, selector),
