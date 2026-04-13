@@ -24,6 +24,10 @@ This package publishes the Steel extension as a reusable Pi package so it can be
 - `steel_pin_session`
 - `steel_release_session`
 
+`steel_scrape` defaults to `text`. Ask for `markdown` when headings, lists, and links matter. Ask for `html` only when raw DOM markup is actually needed.
+
+`steel_scroll` can scroll the page or a nested scroll container. For apps like Google Maps, pass a selector for the results pane instead of relying on window scrolling.
+
 ## Install
 
 Install into Pi as a package:

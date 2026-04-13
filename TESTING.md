@@ -60,6 +60,9 @@ Open https://httpbin.org/forms/post, try to fill a field that does not exist, an
 
 Open https://news.ycombinator.com, scroll to the bottom, and tell me the last visible story title.
 Open https://news.ycombinator.com, scroll down two viewports, extract five currently visible story titles, and confirm they appear in the scraped markdown after scrolling.
+Open https://www.google.com/maps/search/beauty+salons+in+seattle+wa, then use steel_scroll with selector `div[role="feed"]` to move the results pane down and confirm the visible listings changed.
+Open https://news.ycombinator.com, then use steel_scrape with format `markdown` and quote the first two story links.
+Open https://news.ycombinator.com, then use steel_scrape with the default format and confirm it returns readable text rather than raw HTML.
 Open https://example.com and wait for `h1` to appear before reading the page title.
 Open https://example.com and wait for a selector that will never appear with a 3 second timeout. Report the timeout cleanly.
 

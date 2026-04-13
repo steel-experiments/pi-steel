@@ -332,22 +332,22 @@ export function scrapeTool(client: SteelClient): ToolDefinition<any, any> {
   return {
     name: "steel_scrape",
     label: "Scrape",
-    description: "Extract current page content in html, markdown, or text",
+    description: "Extract readable current page content. Use text by default for answering questions, markdown when structure matters, and html only for DOM/debugging cases.",
     parameters: Type.Object({
       format: Type.Optional(
         Type.Union(
           [Type.Literal("html"), Type.Literal("markdown"), Type.Literal("text")],
-          { description: "Output format for extraction" }
+          { description: "Output format. Prefer text for concise reading, markdown to preserve headings/lists/links, and html only when raw DOM markup is specifically needed." }
         )
       ),
       selector: Type.Optional(
-        Type.String({ description: "Optional CSS selector to scope extraction to a specific element" })
+        Type.String({ description: "Optional CSS selector to scope extraction to a specific element before converting to the requested output format" })
       ),
       maxChars: Type.Optional(
         Type.Integer({
           minimum: MIN_MAX_CHARS,
           maximum: MAX_MAX_CHARS,
-          description: `Maximum characters to return (default: ${DEFAULT_MAX_CHARS}, env override: STEEL_SCRAPE_MAX_CHARS)`,
+          description: `Maximum characters to return after conversion to text/markdown/html (default: ${DEFAULT_MAX_CHARS}, env override: STEEL_SCRAPE_MAX_CHARS)`,
         })
       ),
     }),

@@ -931,6 +931,8 @@ describe("Tool registration contracts", () => {
         effectiveAmount: 700,
         viewportHeight: 500,
         contentHeight: 1400,
+        targetType: "page",
+        targetSelector: null,
       }),
     };
 
@@ -938,6 +940,35 @@ describe("Tool registration contracts", () => {
     assertTextResult(result);
     assert.equal(result.details?.effectiveAmount, 700);
     assert.equal(result.details?.direction, "down");
+    assert.equal(result.details?.targetType, "page");
+  });
+
+  it("scrolls a nested container when selector is provided", async () => {
+    const session: MockSession = {
+      id: "session-1",
+      evaluate: async () => ({
+        before: 120,
+        after: 720,
+        maxScrollY: 2400,
+        effectiveAmount: 600,
+        viewportHeight: 640,
+        contentHeight: 3040,
+        targetType: "container",
+        targetSelector: 'div[role="feed"]',
+      }),
+    };
+
+    const { result } = await executeTool(
+      scrollTool as unknown as MockTool,
+      { direction: "down", amount: 600, selector: 'div[role="feed"]' },
+      session
+    );
+
+    assertTextResult(result);
+    assert.equal(result.details?.requestedSelector, 'div[role="feed"]');
+    assert.equal(result.details?.targetType, "container");
+    assert.equal(result.details?.targetSelector, 'div[role="feed"]');
+    assert.equal(result.details?.effectiveAmount, 600);
   });
 
   it("reads page history and title/url details", async () => {
