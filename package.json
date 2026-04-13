@@ -1,0 +1,59 @@
+{
+  "name": "@steel-dev/pi-steel",
+  "version": "0.1.0",
+  "description": "Steel browser automation extension package for Pi",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "steel",
+    "browser-automation"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:tools": "node --import tsx --test tests/tools.test.ts",
+    "test": "npm run typecheck && npm run build && npm run test:tools",
+    "prepublishOnly": "npm test && npm pack --dry-run"
+  },
+  "dependencies": {
+    "playwright-core": "^1.58.2",
+    "steel-sdk": "^0.17.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.54.2",
+    "@sinclair/typebox": "^0.34.48",
+    "@types/node": "^25.3.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "rimraf": "^6.0.1"
+  }
+}
