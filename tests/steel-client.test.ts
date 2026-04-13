@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  buildSessionConnectURL,
   SteelClient,
   resolveSessionConnectURL,
   resolveSessionId,
@@ -120,10 +121,31 @@ describe("session normalization helpers", () => {
     assert.equal(resolveSessionConnectURL({ cdpUrl: "wss://connect.example/ws" }), "wss://connect.example/ws");
   });
 
+  it("injects missing apiKey and sessionId into connect URLs", () => {
+    assert.equal(
+      buildSessionConnectURL(
+        { id: "sess-1", websocketUrl: "wss://connect.steel.dev/" },
+        "test-key"
+      ),
+      "wss://connect.steel.dev/?apiKey=test-key&sessionId=sess-1"
+    );
+    assert.equal(
+      buildSessionConnectURL(
+        { id: "sess-1" },
+        "test-key"
+      ),
+      "wss://connect.steel.dev?apiKey=test-key&sessionId=sess-1"
+    );
+  });
+
   it("prefers explicit viewer url and falls back to viewer base when needed", () => {
     assert.equal(
       resolveSessionViewerURL({ viewerUrl: "https://viewer.example/session/1" }, "https://app.steel.dev"),
       "https://viewer.example/session/1"
+    );
+    assert.equal(
+      resolveSessionViewerURL({ debugUrl: "https://debug.example/session/1" }, "https://app.steel.dev"),
+      "https://debug.example/session/1"
     );
     assert.equal(
       resolveSessionViewerURL({ id: "sess-1" }, "https://app.steel.dev"),

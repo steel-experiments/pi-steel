@@ -255,6 +255,46 @@ export function resolveSessionConnectURL(session: Record<string, unknown>): stri
   ]);
 }
 
+export function buildSessionConnectURL(
+  session: Record<string, unknown>,
+  apiKey?: string | null
+): string | undefined {
+  const rawConnectURL = resolveSessionConnectURL(session);
+  const sessionId = resolveSessionId(session);
+
+  if (!rawConnectURL) {
+    if (!sessionId || !apiKey) {
+      return undefined;
+    }
+    return `wss://connect.steel.dev?apiKey=${encodeURIComponent(apiKey)}&sessionId=${encodeURIComponent(sessionId)}`;
+  }
+
+  try {
+    const parsed = new URL(rawConnectURL);
+    if (apiKey && !parsed.searchParams.get("apiKey")) {
+      parsed.searchParams.set("apiKey", apiKey);
+    }
+    if (sessionId && !parsed.searchParams.get("sessionId")) {
+      parsed.searchParams.set("sessionId", sessionId);
+    }
+    return parsed.toString();
+  } catch {
+    const params = new URLSearchParams();
+    if (apiKey && !/(?:[?&])apiKey=/.test(rawConnectURL)) {
+      params.set("apiKey", apiKey);
+    }
+    if (sessionId && !/(?:[?&])sessionId=/.test(rawConnectURL)) {
+      params.set("sessionId", sessionId);
+    }
+    const query = params.toString();
+    if (!query) {
+      return rawConnectURL;
+    }
+    const separator = rawConnectURL.includes("?") ? "&" : "?";
+    return `${rawConnectURL}${separator}${query}`;
+  }
+}
+
 export function resolveSessionViewerURL(
   session: Record<string, unknown>,
   viewerBaseURL?: string
@@ -263,6 +303,7 @@ export function resolveSessionViewerURL(
     "sessionViewerUrl",
     "viewerUrl",
     "liveViewUrl",
+    "debugUrl",
   ]);
   if (explicit) {
     return explicit;
@@ -563,8 +604,9 @@ export class SteelClient {
         blockAds: true,
       });
 
-      const websocketUrl = this.withApiKey(
-        resolveSessionConnectURL(session as unknown as Record<string, unknown>)
+      const websocketUrl = buildSessionConnectURL(
+        session as unknown as Record<string, unknown>,
+        this.apiKey
       );
       if (!websocketUrl) {
         throw new Error("Steel session did not include a connect URL.");
@@ -633,26 +675,4 @@ export class SteelClient {
     };
   }
 
-  private withApiKey(websocketUrl?: string): string | null {
-    if (!websocketUrl) {
-      return null;
-    }
-    if (!this.apiKey) {
-      return websocketUrl;
-    }
-
-    try {
-      const parsed = new URL(websocketUrl);
-      if (!parsed.searchParams.get("apiKey")) {
-        parsed.searchParams.set("apiKey", this.apiKey);
-      }
-      return parsed.toString();
-    } catch {
-      if (/(?:[?&])apiKey=/.test(websocketUrl)) {
-        return websocketUrl;
-      }
-      const separator = websocketUrl.includes("?") ? "&" : "?";
-      return `${websocketUrl}${separator}apiKey=${encodeURIComponent(this.apiKey)}`;
-    }
-  }
 }

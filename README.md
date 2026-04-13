@@ -69,12 +69,19 @@ Optional runtime configuration:
 - `STEEL_SESSION_PERSIST_PROFILE`
 - `STEEL_SESSION_CREDENTIALS`
 - `STEEL_SESSION_NAMESPACE`
+- `STEEL_SESSION_MODE`
 - `STEEL_CAPTCHA_MAX_RETRIES`
 - `STEEL_CAPTCHA_WAIT_MS`
 - `STEEL_CAPTCHA_POLL_INTERVAL_MS`
 - `STEEL_NAVIGATE_RETRY_COUNT`
 
 `pi-steel` reads Steel CLI config for auth and local API resolution, and it normalizes CLI-style API URLs such as `http://localhost:3000/v1` to the SDK-compatible base URL form.
+
+Session lifecycle modes:
+
+- `STEEL_SESSION_MODE=agent` keeps one Steel session for the whole Pi prompt and closes it after `agent_end`. This is the default.
+- `STEEL_SESSION_MODE=session` keeps the same Steel session alive until Pi switches or shuts down the current session.
+- `STEEL_SESSION_MODE=turn` closes the Steel session after each Pi turn. This is more aggressive and can break workflows that need multiple tool rounds inside one prompt.
 
 ## Development
 

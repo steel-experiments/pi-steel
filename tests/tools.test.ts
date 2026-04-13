@@ -39,6 +39,12 @@ type MockTool = {
   ) => Promise<MockToolResult>;
 };
 
+type MockPiApi = {
+  registerTool: (tool: MockTool) => void;
+  on: (eventName: string, _handler: (...args: unknown[]) => unknown) => void;
+  onShutdown: (handler: () => Promise<void> | void) => Promise<void>;
+};
+
 type MockSession = {
   id: string;
   [key: string]: unknown;
@@ -75,6 +81,25 @@ function createUpdatesCollector() {
     updates.push(update);
   };
   return { updates, onUpdate };
+}
+
+function withEnv<T>(key: string, value: string | undefined, fn: () => T): T {
+  const original = process.env[key];
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
+
+  try {
+    return fn();
+  } finally {
+    if (original === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = original;
+    }
+  }
 }
 
 async function executeTool(tool: MockTool, params: Record<string, unknown>, session: MockSession): Promise<{
@@ -179,23 +204,21 @@ describe("Tool registration contracts", () => {
   };
 
   it("registers all tools in expected order", async () => {
-    const originalKey = process.env.STEEL_API_KEY;
-    process.env.STEEL_API_KEY = "test-key";
-
-    const tools: MockTool[] = [];
-    steelExtension({
-      registerTool: (tool: MockTool) => {
-        tools.push(tool);
-      },
-      on: () => {
-        return;
-      },
-      onShutdown: async () => {
-        return;
-      },
-    } as never);
-
-    process.env.STEEL_API_KEY = originalKey;
+    const tools = withEnv("STEEL_API_KEY", "test-key", () => {
+      const registeredTools: MockTool[] = [];
+      steelExtension({
+        registerTool: (tool: MockTool) => {
+          registeredTools.push(tool);
+        },
+        on: () => {
+          return;
+        },
+        onShutdown: async () => {
+          return;
+        },
+      } as never);
+      return registeredTools;
+    });
 
     assert.deepEqual(
       tools.map((tool) => tool.name),
@@ -213,6 +236,57 @@ describe("Tool registration contracts", () => {
       }
       assert.ok(tool.execute instanceof Function);
     }
+  });
+
+  it("uses agent-scoped cleanup by default", () => {
+    const registeredEvents = withEnv("STEEL_API_KEY", "test-key", () =>
+      withEnv("STEEL_SESSION_MODE", undefined, () => {
+        const eventNames: string[] = [];
+        steelExtension({
+          registerTool: () => {
+            return;
+          },
+          on: (eventName: string) => {
+            eventNames.push(eventName);
+          },
+          onShutdown: async () => {
+            return;
+          },
+        } as MockPiApi as never);
+        return eventNames;
+      })
+    );
+
+    assert.deepEqual(registeredEvents, [
+      "agent_end",
+      "session_before_switch",
+      "session_shutdown",
+    ]);
+  });
+
+  it("supports session-scoped cleanup mode", () => {
+    const registeredEvents = withEnv("STEEL_API_KEY", "test-key", () =>
+      withEnv("STEEL_SESSION_MODE", "session", () => {
+        const eventNames: string[] = [];
+        steelExtension({
+          registerTool: () => {
+            return;
+          },
+          on: (eventName: string) => {
+            eventNames.push(eventName);
+          },
+          onShutdown: async () => {
+            return;
+          },
+        } as MockPiApi as never);
+        return eventNames;
+      })
+    );
+
+    assert.deepEqual(registeredEvents, [
+      "session_before_switch",
+      "session_shutdown",
+    ]);
   });
 
   it("executes navigation tool with normalized URL and response contract", async () => {
@@ -461,6 +535,16 @@ describe("Tool registration contracts", () => {
 
     const { result } = await executeTool(pdfTool as unknown as MockTool, {}, session);
     assertTextResult(result);
+    assert.match(result.content[0].text, /^PDF saved: \.artifacts\/pdfs\/steel-pdf-/);
+
+    const filePath = result.details?.filePath;
+    assert.equal(typeof filePath, "string");
+    assert.ok(path.basename(filePath as string).startsWith("steel-pdf-"));
+    assert.equal(path.extname(filePath as string), ".pdf");
+
+    const absoluteFilePath = result.details?.absoluteFilePath;
+    assert.equal(typeof absoluteFilePath, "string");
+    assert.ok(path.isAbsolute(absoluteFilePath as string));
 
     const artifact = result.details?.artifact as Record<string, unknown> | undefined;
     assert.ok(artifact);
@@ -468,6 +552,7 @@ describe("Tool registration contracts", () => {
     assert.equal(artifact?.mimeType, "application/pdf");
     const artifactPath = artifact?.path;
     assert.equal(typeof artifactPath, "string");
+    assert.equal(artifactPath, filePath);
     await rm(artifactPath as string);
   });
 

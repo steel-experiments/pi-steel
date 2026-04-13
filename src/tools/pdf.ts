@@ -214,10 +214,12 @@ export function pdfTool(client: SteelClient): ToolDefinition<any, any> {
         return {
           content: [{
             type: "text",
-            text: `PDF saved: ${fileName}`,
+            text: `PDF saved: ${displayPath}`,
           }],
           details: {
             ...sessionDetails(session, url),
+            filePath: displayPath,
+            absoluteFilePath: targetPath,
             artifact: {
               type: "pdf",
               mimeType: "application/pdf",
