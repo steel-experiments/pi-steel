@@ -1,5 +1,7 @@
 # @steel-experiments/pi-steel
 
+> **Steel Experiments** — This is where we ship early, break things, and explore what's next for browser agents. Experiments, prototypes, bleeding-edge demos, and community contributions that push the boundaries of what's possible with web automation. Not production-ready. Definitely interesting.
+
 Steel browser automation tools for the Pi coding agent.
 
 This package publishes the Steel extension as a reusable Pi package so it can be installed directly into Pi or consumed by other runtimes such as Takopi-based wrappers.
