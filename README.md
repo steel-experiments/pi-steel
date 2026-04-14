@@ -1,4 +1,4 @@
-# @steel-dev/pi-steel
+# @steel-experiments/pi-steel
 
 Steel browser automation tools for the Pi coding agent.
 
@@ -33,13 +33,13 @@ This package publishes the Steel extension as a reusable Pi package so it can be
 Install into Pi as a package:
 
 ```bash
-pi install npm:@steel-dev/pi-steel
+pi install npm:@steel-experiments/pi-steel
 ```
 
 Or load it for a single run:
 
 ```bash
-pi -e npm:@steel-dev/pi-steel
+pi -e npm:@steel-experiments/pi-steel
 ```
 
 For local development from this repo:
@@ -126,4 +126,4 @@ This repo is a Pi package. The package manifest in `package.json` exposes the co
 }
 ```
 
-That lets Pi load the package root directly after `pi install npm:@steel-dev/pi-steel`.
+That lets Pi load the package root directly after `pi install npm:@steel-experiments/pi-steel`.
