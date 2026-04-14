@@ -1,5 +1,5 @@
 {
-  "name": "@steel-dev/pi-steel",
+  "name": "@steel-experiments/pi-steel",
   "version": "0.1.0",
   "description": "Steel browser automation extension package for Pi",
   "type": "module",
