@@ -1,5 +1,7 @@
-import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { promises as fs } from "node:fs";
+import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { assertArtifact, createArtifactPath } from "../artifacts.js";
 import { sessionDetails as baseSessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
@@ -382,7 +384,14 @@ export function scrapeTool(client: SteelClient): ToolDefinition<any, any> {
           signal
         );
         const cleanedResult = format === "text" ? cleanInnerText(result) : result;
-        const limitedResult = truncateContent(cleanedResult, maxChars);
+        const extension = format === "markdown" ? "md" : format === "html" ? "html" : "txt";
+        const artifactPath = await createArtifactPath("scrapes", "steel-scrape", extension);
+        await fs.writeFile(artifactPath, cleanedResult, "utf8");
+        const artifactFile = await assertArtifact(artifactPath);
+        const artifactFooter = `\n\nFull scrape saved: ${artifactFile.absolutePath}`;
+        const includeFooter = maxChars > artifactFooter.length + 20;
+        const inlineLimit = includeFooter ? maxChars - artifactFooter.length : maxChars;
+        const limitedResult = truncateContent(cleanedResult, inlineLimit);
         if (limitedResult.truncated) {
           await emitProgress(
             onUpdate,
@@ -393,9 +402,29 @@ export function scrapeTool(client: SteelClient): ToolDefinition<any, any> {
         await emitProgress(onUpdate, "steel_scrape", "Scrape complete");
 
         return {
-          content: [{ type: "text", text: limitedResult.text }],
+          content: [
+            {
+              type: "text",
+              text: includeFooter
+                ? `${limitedResult.text}${artifactFooter}`
+                : limitedResult.text,
+            },
+          ],
           details: {
             ...sessionDetails(session, url, format, selector),
+            filePath: artifactFile.absolutePath,
+            artifact: {
+              type: "scrape",
+              mimeType:
+                format === "html"
+                  ? "text/html"
+                  : format === "markdown"
+                    ? "text/markdown"
+                    : "text/plain",
+              path: artifactFile.absolutePath,
+              fileName: artifactFile.fileName,
+              sizeBytes: artifactFile.sizeBytes,
+            },
             maxChars,
             contentLength: limitedResult.text.length,
             originalContentLength: limitedResult.originalLength,

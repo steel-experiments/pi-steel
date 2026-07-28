@@ -60,6 +60,8 @@ describe("SteelClient runtime resolution", () => {
       process.env.STEEL_CONFIG_DIR = configDir;
 
       const client = new SteelClient();
+      assert.equal((client as unknown as { client: unknown }).client, null);
+      (client as unknown as { initialize: () => unknown }).initialize();
 
       assert.equal((client as unknown as { apiKey: string | null }).apiKey, "config-key");
       assert.equal(
@@ -83,6 +85,7 @@ describe("SteelClient runtime resolution", () => {
       process.env.STEEL_CONFIG_DIR = configDir;
 
       const client = new SteelClient();
+      (client as unknown as { initialize: () => unknown }).initialize();
       const internal = (client as unknown as { client: { baseURL: string }; apiKey: string | null });
 
       assert.equal(internal.apiKey, null);
@@ -102,6 +105,7 @@ describe("SteelClient runtime resolution", () => {
     process.env.STEEL_SESSION_NAMESPACE = "ops";
 
     const client = new SteelClient();
+    (client as unknown as { initialize: () => unknown }).initialize();
     const options = (client as unknown as {
       sessionCreateOptions: Record<string, unknown>;
     }).sessionCreateOptions;
@@ -138,6 +142,19 @@ describe("session normalization helpers", () => {
     );
   });
 
+  it("preserves session-scoped connect tokens without appending the account API key", () => {
+    assert.equal(
+      buildSessionConnectURL(
+        {
+          id: "sess-1",
+          websocketUrl: "wss://connect.steel.dev?sessionId=sess-1&token=scoped-token",
+        },
+        "account-key"
+      ),
+      "wss://connect.steel.dev/?sessionId=sess-1&token=scoped-token"
+    );
+  });
+
   it("prefers explicit viewer url and falls back to viewer base when needed", () => {
     assert.equal(
       resolveSessionViewerURL({ viewerUrl: "https://viewer.example/session/1" }, "https://app.steel.dev"),
@@ -160,6 +177,59 @@ describe("session normalization helpers", () => {
         sessionId: "sess-1",
         sessionViewerUrl: "https://viewer.example/session/1",
       }
+    );
+  });
+});
+
+describe("session creation cleanup", () => {
+  it("releases the API session when CDP connection fails", async () => {
+    const released: string[] = [];
+    const sdkClient = {
+      sessions: {
+        create: async () => ({
+          id: "11111111-1111-4111-8111-111111111111",
+          websocketUrl:
+            "wss://connect.steel.dev?sessionId=11111111-1111-4111-8111-111111111111&token=scoped",
+        }),
+        release: async (sessionId: string) => {
+          released.push(sessionId);
+        },
+      },
+    };
+    const client = new SteelClient(undefined, {
+      sdkClient: sdkClient as never,
+      connectOverCDP: (async () => {
+        throw new Error("CDP unavailable");
+      }) as never,
+    });
+
+    await assert.rejects(() => client.getOrCreateSession(), /CDP unavailable/);
+    assert.deepEqual(released, ["11111111-1111-4111-8111-111111111111"]);
+  });
+
+  it("retains release failures in session creation diagnostics", async () => {
+    const sdkClient = {
+      sessions: {
+        create: async () => ({
+          id: "22222222-2222-4222-8222-222222222222",
+          websocketUrl:
+            "wss://connect.steel.dev?sessionId=22222222-2222-4222-8222-222222222222&token=scoped",
+        }),
+        release: async () => {
+          throw new Error("release unavailable");
+        },
+      },
+    };
+    const client = new SteelClient(undefined, {
+      sdkClient: sdkClient as never,
+      connectOverCDP: (async () => {
+        throw new Error("CDP unavailable");
+      }) as never,
+    });
+
+    await assert.rejects(
+      () => client.getOrCreateSession(),
+      /Cleanup failures: API release: release unavailable/
     );
   });
 });

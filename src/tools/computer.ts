@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type Steel from "steel-sdk";
+import {
+  assertArtifact,
+  createArtifactPath,
+  persistBinaryArtifact,
+} from "../artifacts.js";
 import { sessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
@@ -39,7 +41,6 @@ type ComputerToolParams = {
   text?: string;
 };
 
-const RELATIVE_SCREENSHOT_DIR = path.join(".artifacts", "screenshots");
 const SUPPORTED_ACTIONS: readonly ComputerAction[] = [
   "move_mouse",
   "click_mouse",
@@ -243,23 +244,8 @@ function buildActionRequest(params: ComputerToolParams): SessionComputerParams {
   }
 }
 
-function screenshotDirectory(): string {
-  return path.resolve(process.cwd(), RELATIVE_SCREENSHOT_DIR);
-}
-
-function toArtifactDisplayPath(filePath: string): string {
-  const relativePath = path.relative(process.cwd(), filePath);
-  if (!relativePath || relativePath.startsWith("..")) {
-    return path.basename(filePath);
-  }
-  return relativePath;
-}
-
 async function createScreenshotPath(): Promise<string> {
-  const dir = screenshotDirectory();
-  await fs.mkdir(dir, { recursive: true });
-  const safeId = randomUUID().slice(0, 8);
-  return path.join(dir, `steel-computer-${Date.now()}-${safeId}.png`);
+  return createArtifactPath("screenshots", "steel-computer", "png");
 }
 
 function decodeBase64Png(raw: string): Buffer {
@@ -281,14 +267,14 @@ function decodeBase64Png(raw: string): Buffer {
 async function persistScreenshotArtifact(base64Image: string) {
   const buffer = decodeBase64Png(base64Image);
   const targetPath = await createScreenshotPath();
-  await fs.writeFile(targetPath, buffer);
-  const displayPath = toArtifactDisplayPath(targetPath);
+  await persistBinaryArtifact(targetPath, buffer);
+  const artifactFile = await assertArtifact(targetPath);
 
   return {
-    path: displayPath,
-    fileName: path.basename(displayPath),
+    path: artifactFile.absolutePath,
+    fileName: artifactFile.fileName,
     mimeType: "image/png",
-    sizeBytes: buffer.length,
+    sizeBytes: artifactFile.sizeBytes,
     type: "image",
   };
 }

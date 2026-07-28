@@ -1,5 +1,5 @@
-import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { sessionDetails, type SteelClient } from "../steel-client.js";
 import { runWithCaptchaRecovery, type CaptchaRecoverySummary } from "./captcha-guard.js";
 import {
@@ -13,6 +13,13 @@ import {
   MAX_TOOL_TIMEOUT_MS,
   resolveToolTimeoutMs,
 } from "./tool-settings.js";
+import {
+  describeTarget,
+  getTargetLocator,
+  resolveTarget,
+  targetParameterProperties,
+  type BrowserTargetInput,
+} from "./target.js";
 
 type SessionLike = {
   id: string;
@@ -182,10 +189,11 @@ export function typeTool(client: SteelClient): ToolDefinition<any, any> {
   return {
     name: "steel_type",
     label: "Type",
-    description: "Type text into an input element",
+    description:
+      "Enter text into a field by CSS selector, ARIA role/name, or visible text. Prefer role/name after steel_snapshot.",
     parameters: Type.Object(
       {
-        selector: Type.String({ description: "CSS selector for the input field" }),
+        ...targetParameterProperties,
         text: Type.String({ description: "Text to type into the field" }),
         clear: Type.Optional(Type.Boolean({ description: "Whether to clear the field before typing" })),
         timeout: Type.Optional(
@@ -200,19 +208,24 @@ export function typeTool(client: SteelClient): ToolDefinition<any, any> {
 
     async execute(
       _toolCallId: string,
-      params: { selector: string; text: string; clear?: boolean; timeout?: number },
+      params: BrowserTargetInput & {
+        text: string;
+        clear?: boolean;
+        timeout?: number;
+      },
       signal: AbortSignal | undefined,
       onUpdate: ToolProgressUpdater,
       _ctx: ExtensionContext
     ): Promise<{ content: Array<{ type: "text"; text: string }>; details: object }> {
       return withToolError("steel_type", async () => {
         throwIfAborted(signal);
-        const selector = normalizeSelector(params.selector);
+        const target = resolveTarget(params);
+        const targetLabel = describeTarget(target);
         const timeoutMs = normalizeTimeout(params.timeout);
         const text = params.text;
         const shouldClear = params.clear ?? true;
 
-        await emitProgress(onUpdate, "steel_type", `Preparing input for ${selector}`);
+        await emitProgress(onUpdate, "steel_type", `Preparing input for ${targetLabel}`);
         const session = (await withAbortSignal(
           client.getOrCreateSession(),
           signal
@@ -221,42 +234,53 @@ export function typeTool(client: SteelClient): ToolDefinition<any, any> {
         const captchaRecovery = await runWithCaptchaRecovery({
           session,
           context: "steel_type",
-          actionLabel: `type into ${selector}`,
+          actionLabel: `type into ${targetLabel}`,
           onUpdate,
           signal,
           operation: async () => {
             throwIfAborted(signal);
-            const fieldState = await withAbortSignal(
-              ensureField(session, selector, timeoutMs),
-              signal
-            );
-            if (!fieldState.found) {
-              throw new Error(`No element matched selector: ${selector}`);
+            const locator = getTargetLocator(session, target);
+            if (locator.waitFor) {
+              await withAbortSignal(
+                locator.waitFor({ state: "visible", timeout: timeoutMs }),
+                signal
+              );
             }
-
-            if (!fieldState.editable) {
-              throw new Error(`Element is not editable: ${selector}`);
+            if (locator.isEnabled && !(await withAbortSignal(locator.isEnabled(), signal))) {
+              throw new Error(`Element is disabled: ${targetLabel}`);
             }
-
             await emitProgress(
               onUpdate,
               "steel_type",
               shouldClear ? "Clearing existing value" : "Typing into field"
             );
             if (shouldClear) {
-              await withAbortSignal(setValue(session, selector, text), signal);
+              if (!locator.fill) {
+                throw new Error(`Session does not support filling ${targetLabel}.`);
+              }
+              await withAbortSignal(locator.fill(text, { timeout: timeoutMs }), signal);
             } else {
-              await withAbortSignal(typeValue(session, selector, text), signal);
+              if (locator.pressSequentially) {
+                await withAbortSignal(
+                  locator.pressSequentially(text, { timeout: timeoutMs }),
+                  signal
+                );
+              } else if (locator.fill) {
+                await withAbortSignal(locator.fill(text, { timeout: timeoutMs }), signal);
+              } else {
+                throw new Error(`Session does not support typing into ${targetLabel}.`);
+              }
             }
           },
         });
-        await emitProgress(onUpdate, "steel_type", `Input applied to ${selector}`);
+        await emitProgress(onUpdate, "steel_type", `Input applied to ${targetLabel}`);
 
         return {
-          content: [{ type: "text", text: `Typed into ${selector}` }],
+          content: [{ type: "text", text: `Typed into ${targetLabel}` }],
           details: {
             ...sessionDetails(session),
-            selector,
+            target,
+            selector: target.kind === "selector" ? target.selector : null,
             timeoutMs,
             clear: shouldClear,
             textLength: text.length,
