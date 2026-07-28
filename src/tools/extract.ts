@@ -366,13 +366,6 @@ function validateExtraction(value: unknown, schema: ExtractionSchema, path: stri
   }
 }
 
-function trimAndNormalizeText(raw: string | null | undefined): string {
-  if (typeof raw !== "string") {
-    return "";
-  }
-  return raw.replace(/\u00a0/g, " ").trim();
-}
-
 async function extractWithBrowser(
   session: SessionLike,
   schema: ExtractionSchema,

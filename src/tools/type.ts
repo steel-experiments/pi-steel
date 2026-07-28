@@ -54,11 +54,6 @@ type SessionLike = {
   };
 };
 
-type FieldActionState = {
-  found: boolean;
-  editable: boolean;
-};
-
 function compactCaptchaRecovery(summary: CaptchaRecoverySummary) {
   return {
     triggered: summary.triggered,
@@ -69,120 +64,8 @@ function compactCaptchaRecovery(summary: CaptchaRecoverySummary) {
   };
 }
 
-function normalizeSelector(selector: string): string {
-  const trimmed = selector.trim();
-  if (!trimmed) {
-    throw new Error("Selector cannot be empty.");
-  }
-  return trimmed;
-}
-
 function normalizeTimeout(timeoutMs?: number): number {
   return resolveToolTimeoutMs(timeoutMs);
-}
-
-async function ensureField(session: SessionLike, selector: string, timeoutMs: number): Promise<FieldActionState> {
-  if (typeof session.waitForSelector === "function") {
-    await session.waitForSelector(selector, { state: "visible", timeout: timeoutMs });
-  } else if (typeof session.page?.waitForSelector === "function") {
-    await session.page.waitForSelector(selector, { state: "visible", timeout: timeoutMs });
-  }
-
-  const evaluate = session.evaluate ?? session.page?.evaluate;
-  if (typeof evaluate !== "function") {
-    return { found: true, editable: true };
-  }
-
-  return evaluate((rawSelector: string) => {
-    const element = document.querySelector(rawSelector) as HTMLElement | null;
-    if (!element) {
-      return { found: false, editable: false };
-    }
-
-    const tag = element.tagName.toLowerCase();
-    const isInputLike =
-      tag === "input" ||
-      tag === "textarea" ||
-      element.isContentEditable;
-
-    const htmlInput = element as HTMLInputElement;
-    const editable = isInputLike && htmlInput.readOnly !== true;
-    const disabled =
-      (element as HTMLInputElement).disabled === true ||
-      element.getAttribute("aria-disabled") === "true";
-
-    return { found: true, editable: editable && !disabled };
-  }, selector);
-}
-
-async function setValue(session: SessionLike, selector: string, text: string): Promise<void> {
-  if (typeof session.fill === "function") {
-    await session.fill(selector, text);
-    return;
-  }
-
-  if (typeof session.page?.fill === "function") {
-    await session.page.fill(selector, text);
-    return;
-  }
-
-  const locator =
-    typeof session.locator === "function"
-      ? session.locator(selector)
-      : session.page?.locator?.(selector);
-
-  const locatorFill = locator?.fill;
-  if (typeof locatorFill === "function") {
-    await locatorFill.call(locator, text);
-    return;
-  }
-
-  const evaluate = session.evaluate ?? session.page?.evaluate;
-  if (typeof evaluate !== "function") {
-    throw new Error("Session does not support setting input values.");
-  }
-
-  const result = await evaluate((input: { selector: string; value: string }) => {
-    const element = document.querySelector(input.selector) as HTMLInputElement | HTMLTextAreaElement | null;
-    if (!element) {
-      return false;
-    }
-
-    element.focus();
-    element.value = input.value;
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  }, { selector, value: text });
-
-  if (!result) {
-    throw new Error(`Element not found: ${selector}`);
-  }
-}
-
-async function typeValue(session: SessionLike, selector: string, text: string): Promise<void> {
-  if (typeof session.type === "function") {
-    await session.type(selector, text);
-    return;
-  }
-
-  if (typeof session.page?.type === "function") {
-    await session.page.type(selector, text);
-    return;
-  }
-
-  const locator =
-    typeof session.locator === "function"
-      ? session.locator(selector)
-      : session.page?.locator?.(selector);
-
-  const locatorType = locator?.type;
-  if (typeof locatorType === "function") {
-    await locatorType.call(locator, text);
-    return;
-  }
-
-  await setValue(session, selector, text);
 }
 
 export function typeTool(client: SteelClient): ToolDefinition<any, any> {

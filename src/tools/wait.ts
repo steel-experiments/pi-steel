@@ -3,7 +3,6 @@ import { Type } from "typebox";
 import { sessionDetails as baseSessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
-  sleepWithSignal,
   throwIfAborted,
   withAbortSignal,
   withToolError,
@@ -48,26 +47,11 @@ type SessionLike = {
   url?: (() => Promise<string> | string) | string;
 };
 
-const POLL_DELAY_MS = 100;
-
 function sessionDetails(session: SessionLike, url: string) {
   return {
     ...baseSessionDetails(session),
     url,
   };
-}
-
-function normalizeSelector(rawSelector?: string): string {
-  if (typeof rawSelector !== "string") {
-    throw new Error("selector is required and must be a string.");
-  }
-
-  const trimmed = rawSelector.trim();
-  if (!trimmed) {
-    throw new Error("selector cannot be empty.");
-  }
-
-  return trimmed;
 }
 
 function resolveTimeout(rawTimeout?: number): number {
@@ -79,77 +63,6 @@ function resolveState(rawState?: string): WaitState {
     return "attached";
   }
   return "visible";
-}
-
-function getWaitFunction(session: SessionLike): ((selector: string, state: WaitState, timeoutMs: number, signal: AbortSignal | undefined) => Promise<void>) {
-  if (typeof session.waitForSelector === "function") {
-    return async (selector, state, timeoutMs, signal) => {
-      throwIfAborted(signal);
-      await withAbortSignal(
-        session.waitForSelector?.(selector, { state, timeout: timeoutMs }) as Promise<unknown>,
-        signal
-      );
-    };
-  }
-
-  if (typeof session.page?.waitForSelector === "function") {
-    return async (selector, state, timeoutMs, signal) => {
-      throwIfAborted(signal);
-      await withAbortSignal(
-        session.page?.waitForSelector?.(selector, { state, timeout: timeoutMs }) as Promise<unknown>,
-        signal
-      );
-    };
-  }
-
-  const evaluate = session.evaluate ?? session.page?.evaluate;
-  if (typeof evaluate !== "function") {
-    throw new Error("Session does not support selector waiting.");
-  }
-
-  return async (selector, state, timeoutMs, signal) => {
-    const deadline = Date.now() + timeoutMs;
-
-    while (true) {
-      throwIfAborted(signal);
-      const isMatched = await withAbortSignal(
-        evaluate(
-        (input: { selector: string; state: WaitState }) => {
-          const element = document.querySelector(input.selector);
-          if (!element) {
-            return false;
-          }
-
-          if (input.state === "attached") {
-            return true;
-          }
-
-          const rect = element.getBoundingClientRect();
-          const style = getComputedStyle(element);
-          const isVisible =
-            rect.width > 0 &&
-            rect.height > 0 &&
-            style.opacity !== "0" &&
-            style.visibility !== "hidden" &&
-            style.display !== "none" &&
-            Number.parseFloat(style.opacity) > 0;
-
-          return isVisible;
-        },
-        { selector, state }
-      ) as Promise<boolean>, signal);
-
-      if (isMatched) {
-        return;
-      }
-
-      if (Date.now() > deadline) {
-        throw new Error("selector wait timed out");
-      }
-
-      await sleepWithSignal(Math.min(POLL_DELAY_MS, Math.max(10, deadline - Date.now())), signal);
-    }
-  };
 }
 
 async function readSessionUrl(session: SessionLike): Promise<string> {

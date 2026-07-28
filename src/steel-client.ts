@@ -90,7 +90,6 @@ export interface SessionRefreshOptions {
 
 const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_ENV_VALUES = new Set(["0", "false", "no", "off"]);
-const DEFAULT_STEEL_BASE_URL = "https://api.steel.dev";
 const DEFAULT_STEEL_APP_URL = "https://app.steel.dev";
 
 function normalizeConfigDir(input: string | undefined): string {

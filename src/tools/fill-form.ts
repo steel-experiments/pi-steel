@@ -82,14 +82,6 @@ function compactCaptchaRecovery(summary: CaptchaRecoverySummary) {
   };
 }
 
-function normalizeSelector(selector: string): string {
-  const trimmed = selector.trim();
-  if (!trimmed) {
-    throw new Error("Selector cannot be empty.");
-  }
-  return trimmed;
-}
-
 function normalizeTimeout(timeoutMs?: number): number {
   return resolveToolTimeoutMs(timeoutMs);
 }
@@ -120,79 +112,6 @@ function asArray(input: unknown): FieldInput[] {
       };
     })
     .filter((entry): entry is FieldInput => Boolean(entry));
-}
-
-async function ensureField(session: SessionLike, selector: string, timeoutMs: number): Promise<void> {
-  if (typeof session.waitForSelector === "function") {
-    await session.waitForSelector(selector, { state: "visible", timeout: timeoutMs });
-    return;
-  }
-
-  if (typeof session.page?.waitForSelector === "function") {
-    await session.page.waitForSelector(selector, { state: "visible", timeout: timeoutMs });
-    return;
-  }
-
-  const evaluate = session.evaluate ?? session.page?.evaluate;
-  if (typeof evaluate !== "function") {
-    return;
-  }
-
-  const valid = await evaluate((rawSelector: string) => {
-    const element = document.querySelector(rawSelector);
-    return Boolean(element);
-  }, selector);
-
-  if (!valid) {
-    throw new Error(`No element matched selector: ${selector}`);
-  }
-}
-
-async function fill(session: SessionLike, selector: string, value: string): Promise<void> {
-  if (typeof session.fill === "function") {
-    await session.fill(selector, value);
-    return;
-  }
-
-  if (typeof session.page?.fill === "function") {
-    await session.page.fill(selector, value);
-    return;
-  }
-
-  const locator =
-    typeof session.locator === "function"
-      ? session.locator(selector)
-      : session.page?.locator?.(selector);
-
-  const locatorFill = locator?.fill;
-  if (typeof locatorFill === "function") {
-    await locatorFill.call(locator, value);
-    return;
-  }
-
-  const evaluate = session.evaluate ?? session.page?.evaluate;
-  if (typeof evaluate !== "function") {
-    throw new Error("Session does not support setting input values.");
-  }
-
-  const ok = await evaluate(
-    (input: { selector: string; value: string }) => {
-      const element = document.querySelector(input.selector) as HTMLInputElement | HTMLTextAreaElement | null;
-      if (!element) {
-        return false;
-      }
-
-      element.value = input.value;
-      element.dispatchEvent(new Event("input", { bubbles: true }));
-      element.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
-    },
-    { selector, value }
-  );
-
-  if (!ok) {
-    throw new Error(`Could not set value for selector: ${selector}`);
-  }
 }
 
 export function fillFormTool(client: SteelClient): ToolDefinition<any, any> {

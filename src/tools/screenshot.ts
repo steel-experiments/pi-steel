@@ -53,15 +53,6 @@ type SessionLike = {
   url?: (() => Promise<string> | string) | string;
 };
 
-type ClipRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-const DEFAULT_FULL_PAGE = false;
-
 function sessionDetails(session: SessionLike, url: string, selector: string | undefined, fullPage: boolean) {
   return {
     ...baseSessionDetails(session),
@@ -69,19 +60,6 @@ function sessionDetails(session: SessionLike, url: string, selector: string | un
     selector: selector ?? null,
     fullPage,
   };
-}
-
-function normalizeSelector(selector?: string): string | undefined {
-  if (selector === undefined) {
-    return undefined;
-  }
-
-  const trimmed = selector.trim();
-  if (!trimmed) {
-    throw new Error("selector cannot be empty.");
-  }
-
-  return trimmed;
 }
 
 function resolveTimeoutMs(rawTimeout?: number): number {
@@ -129,26 +107,6 @@ async function makeArtifactPath(): Promise<string> {
   return createArtifactPath("screenshots", "steel-screenshot", "png");
 }
 
-async function getWaitForSelector(session: SessionLike): Promise<
-  (selector: string, timeoutMs: number) => Promise<void>
-> {
-  if (typeof session.waitForSelector === "function") {
-    return async (selector, timeoutMs) => {
-      await session.waitForSelector?.(selector, { state: "visible", timeout: timeoutMs });
-    };
-  }
-
-  if (typeof session.page?.waitForSelector === "function") {
-    return async (selector, timeoutMs) => {
-      await session.page?.waitForSelector?.(selector, { state: "visible", timeout: timeoutMs });
-    };
-  }
-
-  return async () => {
-    return;
-  };
-}
-
 function getSessionScreenshot(
   session: SessionLike
 ): ((options: Record<string, unknown>) => Promise<unknown>) | undefined {
@@ -165,74 +123,6 @@ function getSessionScreenshot(
   }
 
   return undefined;
-}
-
-function getSessionLocator(
-  session: SessionLike,
-  selector: string
-): { screenshot?: (options: Record<string, unknown>) => Promise<unknown> } | undefined {
-  if (typeof session.locator === "function") {
-    return session.locator(selector);
-  }
-
-  if (typeof session.page?.locator === "function") {
-    return session.page.locator(selector);
-  }
-
-  return undefined;
-}
-
-async function captureWithSelector(
-  session: SessionLike,
-  selector: string,
-  targetPath: string,
-  timeoutMs: number
-): Promise<unknown> {
-  const waitForSelector = await getWaitForSelector(session);
-  await waitForSelector(selector, timeoutMs);
-
-  const locator = getSessionLocator(session, selector);
-  if (locator?.screenshot) {
-    return locator.screenshot({ path: targetPath });
-  }
-
-  const evaluate = session.evaluate ?? session.page?.evaluate;
-  if (typeof evaluate !== "function") {
-    return false;
-  }
-
-  const clip = await evaluate((rawSelector: string): ClipRect | null => {
-    const element = document.querySelector(rawSelector) as HTMLElement | null;
-    if (!element) {
-      return null;
-    }
-
-    const bounds = element.getBoundingClientRect();
-    if (!bounds.width || !bounds.height) {
-      return null;
-    }
-
-    return {
-      x: Math.max(0, Math.floor(bounds.left)),
-      y: Math.max(0, Math.floor(bounds.top)),
-      width: Math.max(1, Math.ceil(bounds.width)),
-      height: Math.max(1, Math.ceil(bounds.height)),
-    };
-  }, selector);
-
-  if (!clip) {
-    throw new Error(`No element matched selector: ${selector}`);
-  }
-
-  const screenshot = getSessionScreenshot(session);
-  if (!screenshot) {
-    return undefined;
-  }
-
-  return screenshot({
-    path: targetPath,
-    clip,
-  });
 }
 
 async function captureFullPage(
