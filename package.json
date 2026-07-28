@@ -45,11 +45,15 @@
     ]
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:tools": "node --import tsx --test tests/*.test.ts",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck:src": "tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
+    "typecheck": "npm run typecheck:src && npm run typecheck:tests",
+    "test:tools": "npm run build && node --import tsx --test tests/*.test.ts",
     "test:live": "node --import tsx --test tests/live.smoke.ts",
-    "test": "npm run typecheck && npm run build && npm run test:tools",
+    "test": "npm run typecheck && npm run test:tools",
+    "check": "npm test && npm pack --dry-run && npm audit --omit=dev --audit-level=high",
     "prepare": "npm run build",
     "prepublishOnly": "npm test && npm pack --dry-run"
   },

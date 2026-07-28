@@ -11,7 +11,7 @@ import {
   resolveSessionId,
   resolveSessionViewerURL,
   sessionDetails,
-} from "../dist/steel-client.js";
+} from "../src/steel-client.js";
 
 const ENV_KEYS = [
   "STEEL_API_KEY",

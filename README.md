@@ -4,12 +4,31 @@ Official [Steel](https://steel.dev) cloud-browser tools for the [Pi coding agent
 
 ## Install
 
+### Steel CLI authentication
+
+If the Steel CLI is not already installed, install it first:
+
 ```bash
-pi install npm:@steel-dev/pi
-steel login
+curl -fsS https://setup.steel.dev | sh
 ```
 
-Alternatively, export `STEEL_API_KEY`. Then ask Pi to browse:
+Then authenticate and install the Pi extension:
+
+```bash
+steel login
+pi install npm:@steel-dev/pi
+```
+
+### API key authentication
+
+Create or copy an API key from [app.steel.dev](https://app.steel.dev), then:
+
+```bash
+export STEEL_API_KEY="your-steel-api-key"
+pi install npm:@steel-dev/pi
+```
+
+Then ask Pi to browse:
 
 ```text
 Open Hacker News, inspect the page, and tell me the top story.
@@ -117,7 +136,7 @@ The extension prefers the session-scoped `websocketUrl` returned by session crea
 
 ```bash
 npm install
-npm test
+npm run check
 pi --no-extensions -e .
 ```
 
