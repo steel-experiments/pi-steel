@@ -48,8 +48,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:tools": "node --import tsx --test tests/*.test.ts",
-    "test:live": "node --import tsx --test tests/live.test.ts",
+    "test:live": "node --import tsx --test tests/live.smoke.ts",
     "test": "npm run typecheck && npm run build && npm run test:tools",
+    "prepare": "npm run build",
     "prepublishOnly": "npm test && npm pack --dry-run"
   },
   "dependencies": {

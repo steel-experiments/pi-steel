@@ -489,31 +489,32 @@ export class SteelClient {
       return this.client;
     }
 
+    const sessionCreateOptions = {
+      ...resolveSessionCreateOptionsFromEnv(),
+      ...(this.options.sessionCreateOptions ?? {}),
+    };
+
     if (this.options.sdkClient) {
-      this.client = this.options.sdkClient;
+      const client = this.options.sdkClient;
+      this.client = client;
       this.apiKey = this.options.apiKey ?? this.apiKeyOverride ?? null;
-      this.sessionCreateOptions = {
-        ...resolveSessionCreateOptionsFromEnv(),
-        ...(this.options.sessionCreateOptions ?? {}),
-      };
-      return this.client;
+      this.sessionCreateOptions = sessionCreateOptions;
+      return client;
     }
 
     const runtimeConfig = resolveSteelRuntimeConfig(
       this.options.apiKey ?? this.apiKeyOverride,
       this.options.baseURL
     );
-    this.client = new Steel({
+    const client = new Steel({
       steelAPIKey: runtimeConfig.apiKey,
       baseURL: runtimeConfig.baseURL,
     });
+    this.client = client;
     this.apiKey = runtimeConfig.apiKey;
     this.viewerBaseURL = runtimeConfig.viewerBaseURL;
-    this.sessionCreateOptions = {
-      ...resolveSessionCreateOptionsFromEnv(),
-      ...(this.options.sessionCreateOptions ?? {}),
-    };
-    return this.client;
+    this.sessionCreateOptions = sessionCreateOptions;
+    return client;
   }
 
   async getOrCreateSession(): Promise<LiveSteelSession> {
