@@ -1,5 +1,8 @@
 # @steel-dev/pi
 
+> [!IMPORTANT]
+> This repository has moved to **[steel-dev/pi-steel](https://github.com/steel-dev/pi-steel)**. Please use the new repository for current development, issues, and pull requests.
+
 Official [Steel](https://steel.dev) cloud-browser tools for the [Pi coding agent](https://pi.dev).
 
 ## Install
