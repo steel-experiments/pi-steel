@@ -15,6 +15,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "resolveJsonModule": true,
+    "noUnusedLocals": true,
     "noEmitOnError": true
   },
   "include": ["src/**/*.ts"],

@@ -79,6 +79,8 @@ export interface SteelClientOptions {
   baseURL?: string;
   sessionTimeoutMs?: number;
   sessionCreateOptions?: Partial<SessionCreateOptions>;
+  sdkClient?: Steel;
+  connectOverCDP?: typeof chromium.connectOverCDP;
 }
 
 export interface SessionRefreshOptions {
@@ -88,7 +90,6 @@ export interface SessionRefreshOptions {
 
 const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSE_ENV_VALUES = new Set(["0", "false", "no", "off"]);
-const DEFAULT_STEEL_BASE_URL = "https://api.steel.dev";
 const DEFAULT_STEEL_APP_URL = "https://app.steel.dev";
 
 function normalizeConfigDir(input: string | undefined): string {
@@ -271,25 +272,29 @@ export function buildSessionConnectURL(
 
   try {
     const parsed = new URL(rawConnectURL);
-    if (apiKey && !parsed.searchParams.get("apiKey")) {
+    const hasScopedAuth =
+      parsed.searchParams.has("token") ||
+      parsed.searchParams.has("apiKey") ||
+      parsed.searchParams.has("access_token");
+
+    if (!hasScopedAuth && apiKey) {
       parsed.searchParams.set("apiKey", apiKey);
-    }
-    if (sessionId && !parsed.searchParams.get("sessionId")) {
-      parsed.searchParams.set("sessionId", sessionId);
+      if (sessionId && !parsed.searchParams.has("sessionId")) {
+        parsed.searchParams.set("sessionId", sessionId);
+      }
     }
     return parsed.toString();
   } catch {
-    const params = new URLSearchParams();
-    if (apiKey && !/(?:[?&])apiKey=/.test(rawConnectURL)) {
-      params.set("apiKey", apiKey);
+    const hasScopedAuth = /(?:[?&])(?:token|apiKey|access_token)=/.test(rawConnectURL);
+    if (hasScopedAuth || !apiKey) {
+      return rawConnectURL;
     }
+
+    const params = new URLSearchParams({ apiKey });
     if (sessionId && !/(?:[?&])sessionId=/.test(rawConnectURL)) {
       params.set("sessionId", sessionId);
     }
     const query = params.toString();
-    if (!query) {
-      return rawConnectURL;
-    }
     const separator = rawConnectURL.includes("?") ? "&" : "?";
     return `${rawConnectURL}${separator}${query}`;
   }
@@ -434,20 +439,23 @@ function resolveSessionCreateOptionsFromEnv(): Partial<SessionCreateOptions> {
 export class SteelClient {
   private static readonly DEFAULT_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
-  private readonly client: Steel;
-  private readonly apiKey: string | null;
+  private client: Steel | null = null;
+  private apiKey: string | null = null;
   private readonly sessionTimeoutMs: number;
-  private readonly sessionCreateOptions: Partial<SessionCreateOptions>;
-  private readonly viewerBaseURL?: string;
+  private sessionCreateOptions: Partial<SessionCreateOptions> | null = null;
+  private viewerBaseURL?: string;
+  private readonly options: SteelClientOptions;
+  private readonly apiKeyOverride?: string;
+  private readonly connectOverCDP: typeof chromium.connectOverCDP;
   private currentSession: TrackedSession | null = null;
   private readonly sessions = new Map<string, TrackedSession>();
   private creatingSession: Promise<TrackedSession> | null = null;
 
   constructor(apiKey?: string, options: SteelClientOptions = {}) {
-    const runtimeConfig = resolveSteelRuntimeConfig(
-      options.apiKey ?? apiKey,
-      options.baseURL
-    );
+    this.apiKeyOverride = apiKey;
+    this.options = options;
+    this.connectOverCDP =
+      options.connectOverCDP ?? chromium.connectOverCDP.bind(chromium);
     const configuredTimeout =
       options.sessionTimeoutMs === undefined
         ? undefined
@@ -473,17 +481,40 @@ export class SteelClient {
       normalizedFallbackTimeout ??
       SteelClient.DEFAULT_SESSION_TIMEOUT_MS;
 
-    this.client = new Steel({
+    this.sessionTimeoutMs = resolvedTimeout;
+  }
+
+  private initialize(): Steel {
+    if (this.client) {
+      return this.client;
+    }
+
+    const sessionCreateOptions = {
+      ...resolveSessionCreateOptionsFromEnv(),
+      ...(this.options.sessionCreateOptions ?? {}),
+    };
+
+    if (this.options.sdkClient) {
+      const client = this.options.sdkClient;
+      this.client = client;
+      this.apiKey = this.options.apiKey ?? this.apiKeyOverride ?? null;
+      this.sessionCreateOptions = sessionCreateOptions;
+      return client;
+    }
+
+    const runtimeConfig = resolveSteelRuntimeConfig(
+      this.options.apiKey ?? this.apiKeyOverride,
+      this.options.baseURL
+    );
+    const client = new Steel({
       steelAPIKey: runtimeConfig.apiKey,
       baseURL: runtimeConfig.baseURL,
     });
+    this.client = client;
     this.apiKey = runtimeConfig.apiKey;
     this.viewerBaseURL = runtimeConfig.viewerBaseURL;
-    this.sessionTimeoutMs = resolvedTimeout;
-    this.sessionCreateOptions = {
-      ...resolveSessionCreateOptionsFromEnv(),
-      ...(options.sessionCreateOptions ?? {}),
-    };
+    this.sessionCreateOptions = sessionCreateOptions;
+    return client;
   }
 
   async getOrCreateSession(): Promise<LiveSteelSession> {
@@ -508,7 +539,8 @@ export class SteelClient {
   }
 
   isProxyConfigured(): boolean {
-    const { useProxy, proxyUrl } = this.sessionCreateOptions;
+    this.initialize();
+    const { useProxy, proxyUrl } = this.sessionCreateOptions ?? {};
     if (typeof proxyUrl === "string" && proxyUrl.trim().length > 0) {
       return true;
     }
@@ -544,17 +576,33 @@ export class SteelClient {
       this.currentSession = null;
     }
 
-    if (!tracked) {
-      return;
+    const failures: string[] = [];
+    if (tracked) {
+      try {
+        await tracked.browser.close();
+      } catch (error) {
+        failures.push(`browser close: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
-    await Promise.allSettled([
-      tracked.browser.close(),
-      this.client.sessions.release(targetSessionId),
-    ]);
+    if (this.client) {
+      try {
+        await this.client.sessions.release(targetSessionId);
+      } catch (error) {
+        failures.push(`API release: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    if (failures.length > 0) {
+      throw new Error(`Failed to fully close Steel session ${targetSessionId}: ${failures.join("; ")}`);
+    }
   }
 
   async closeAllSessions(): Promise<void> {
+    if (this.creatingSession) {
+      await this.creatingSession.catch(() => undefined);
+    }
+
     const trackedSessions = [...this.sessions.values()];
     const sessionIds = trackedSessions.map((tracked) => tracked.metadata.id);
     this.sessions.clear();
@@ -565,17 +613,37 @@ export class SteelClient {
       return;
     }
 
-    await Promise.allSettled(
+    const failures: string[] = [];
+    const closeResults = await Promise.allSettled(
       trackedSessions.map((tracked) => tracked.browser.close())
     );
+    closeResults.forEach((result, index) => {
+      if (result.status === "rejected") {
+        failures.push(
+          `${sessionIds[index]} browser close: ${
+            result.reason instanceof Error ? result.reason.message : String(result.reason)
+          }`
+        );
+      }
+    });
 
-    const releaseResult = await Promise.allSettled(
-      sessionIds.map((sessionId) => this.client.sessions.release(sessionId))
-    );
+    if (this.client) {
+      const releaseResults = await Promise.allSettled(
+        sessionIds.map((sessionId) => this.client!.sessions.release(sessionId))
+      );
+      releaseResults.forEach((result, index) => {
+        if (result.status === "rejected") {
+          failures.push(
+            `${sessionIds[index]} API release: ${
+              result.reason instanceof Error ? result.reason.message : String(result.reason)
+            }`
+          );
+        }
+      });
+    }
 
-    const allRejected = releaseResult.every((entry) => entry.status === "rejected");
-    if (allRejected) {
-      await this.client.sessions.releaseAll();
+    if (failures.length > 0) {
+      throw new Error(`Failed to fully close Steel sessions: ${failures.join("; ")}`);
     }
   }
 
@@ -583,7 +651,7 @@ export class SteelClient {
     options: SessionRefreshOptions = {}
   ): Partial<SessionCreateOptions> {
     const merged: Partial<SessionCreateOptions> = {
-      ...this.sessionCreateOptions,
+      ...(this.sessionCreateOptions ?? {}),
     };
 
     if (options.useProxy !== undefined) {
@@ -603,11 +671,15 @@ export class SteelClient {
   }
 
   private async createSession(
-    createOptions: Partial<SessionCreateOptions> = this.sessionCreateOptions
+    createOptions?: Partial<SessionCreateOptions>
   ): Promise<TrackedSession> {
+    const client = this.initialize();
+    let session: SessionMetadata | null = null;
+    let browser: Browser | null = null;
+
     try {
-      const session = await this.client.sessions.create({
-        ...createOptions,
+      session = await client.sessions.create({
+        ...(createOptions ?? this.sessionCreateOptions ?? {}),
         timeout: this.sessionTimeoutMs,
         blockAds: true,
       });
@@ -620,8 +692,11 @@ export class SteelClient {
         throw new Error("Steel session did not include a connect URL.");
       }
 
-      const browser = await chromium.connectOverCDP(websocketUrl);
-      const context = browser.contexts()[0] ?? (await browser.newContext());
+      browser = await this.connectOverCDP(websocketUrl);
+      const context = browser.contexts()[0];
+      if (!context) {
+        throw new Error("Steel CDP connection did not expose the default browser context.");
+      }
       const page = context.pages()[0] ?? (await context.newPage());
       const liveSession = this.buildLiveSession(session, page);
 
@@ -637,7 +712,36 @@ export class SteelClient {
       this.currentSession = tracked;
       return tracked;
     } catch (error: unknown) {
-      throw toolError("SteelClient session creation", error);
+      const cleanupFailures: string[] = [];
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (cleanupError) {
+          cleanupFailures.push(
+            `browser close: ${
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+            }`
+          );
+        }
+      }
+      if (session) {
+        try {
+          await client.sessions.release(session.id);
+        } catch (cleanupError) {
+          cleanupFailures.push(
+            `API release: ${
+              cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+            }`
+          );
+        }
+      }
+
+      const primary = error instanceof Error ? error.message : String(error);
+      const message =
+        cleanupFailures.length > 0
+          ? `${primary}. Cleanup failures: ${cleanupFailures.join("; ")}`
+          : primary;
+      throw toolError("SteelClient session creation", message);
     } finally {
       this.creatingSession = null;
     }
@@ -647,6 +751,7 @@ export class SteelClient {
     session: SessionMetadata,
     page: Page
   ): LiveSteelSession {
+    const client = this.initialize();
     const sessionId =
       resolveSessionId(session as unknown as Record<string, unknown>) ?? session.id;
 
@@ -677,9 +782,9 @@ export class SteelClient {
       content: () => page.content(),
       screenshot: (options) => page.screenshot(options),
       pdf: (options) => page.pdf(options),
-      computer: (body) => this.client.sessions.computer(sessionId, body),
-      captchasStatus: () => this.client.sessions.captchas.status(sessionId),
-      captchasSolve: () => this.client.sessions.captchas.solve(sessionId),
+      computer: (body) => client.sessions.computer(sessionId, body),
+      captchasStatus: () => client.sessions.captchas.status(sessionId),
+      captchasSolve: () => client.sessions.captchas.solve(sessionId),
     };
   }
 

@@ -1,8 +1,10 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import {
+  assertArtifact,
+  createArtifactPath,
+  persistBinaryArtifact,
+} from "../artifacts.js";
 import { sessionDetails as baseSessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
@@ -30,7 +32,6 @@ type SessionLike = {
   url?: (() => Promise<string> | string) | string;
 };
 
-const RELATIVE_PDF_DIR = path.join(".artifacts", "pdfs");
 const DEFAULT_PDF_OPTIONS = {
   printBackground: true,
   preferCSSPageSize: true,
@@ -43,53 +44,8 @@ function sessionDetails(session: SessionLike, url: string) {
   };
 }
 
-function artifactDirectory(): string {
-  return path.resolve(process.cwd(), RELATIVE_PDF_DIR);
-}
-
-function toArtifactDisplayPath(filePath: string): string {
-  const relativePath = path.relative(process.cwd(), filePath);
-  if (!relativePath || relativePath.startsWith("..")) {
-    return path.basename(filePath);
-  }
-  return relativePath;
-}
-
 async function makeArtifactPath(): Promise<string> {
-  const dir = artifactDirectory();
-  await fs.mkdir(dir, { recursive: true });
-  const safeId = randomUUID().slice(0, 8);
-  return path.join(dir, `steel-pdf-${Date.now()}-${safeId}.pdf`);
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isBinaryLike(value: unknown): Buffer | Uint8Array | null {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-
-  if (value instanceof Buffer) {
-    return value;
-  }
-
-  return null;
-}
-
-async function writeBinaryArtifact(filePath: string, payload: unknown): Promise<void> {
-  const binary = isBinaryLike(payload);
-  if (!binary) {
-    return;
-  }
-
-  await fs.writeFile(filePath, Buffer.from(binary));
+  return createArtifactPath("pdfs", "steel-pdf", "pdf");
 }
 
 async function readSessionUrl(session: SessionLike): Promise<string> {
@@ -114,21 +70,6 @@ async function readSessionUrl(session: SessionLike): Promise<string> {
   }
 
   return "unknown";
-}
-
-async function generatePdf(session: SessionLike, filePath: string): Promise<unknown> {
-  const pdfCall = session.pdf ?? session.page?.pdf;
-  if (typeof pdfCall !== "function") {
-    throw new Error("Session does not support PDF generation.");
-  }
-
-  const options = { path: filePath, ...DEFAULT_PDF_OPTIONS };
-
-  if (pdfCall === session.pdf) {
-    return session.pdf?.(options);
-  }
-
-  return session.page?.pdf?.(options);
 }
 
 export function pdfTool(client: SteelClient): ToolDefinition<any, any> {
@@ -201,31 +142,23 @@ export function pdfTool(client: SteelClient): ToolDefinition<any, any> {
         })();
 
         await emitProgress(onUpdate, "steel_pdf", `Writing PDF to ${targetPath}`);
-        await writeBinaryArtifact(targetPath, pdfResult);
-
-        if (!(await fileExists(targetPath))) {
-          throw new Error("PDF artifact was not written to disk.");
-        }
-
-        const stats = await fs.stat(targetPath);
-        const fileName = path.basename(targetPath);
-        const displayPath = toArtifactDisplayPath(targetPath);
+        await persistBinaryArtifact(targetPath, pdfResult);
+        const artifactFile = await assertArtifact(targetPath);
 
         return {
           content: [{
             type: "text",
-            text: `PDF saved: ${displayPath}`,
+            text: `PDF saved: ${artifactFile.absolutePath}`,
           }],
           details: {
             ...sessionDetails(session, url),
-            filePath: displayPath,
-            absoluteFilePath: targetPath,
+            filePath: artifactFile.absolutePath,
             artifact: {
               type: "pdf",
               mimeType: "application/pdf",
-              path: displayPath,
-              fileName,
-              sizeBytes: stats.size,
+              path: artifactFile.absolutePath,
+              fileName: artifactFile.fileName,
+              sizeBytes: artifactFile.sizeBytes,
               createdAt: new Date().toISOString(),
             },
             options,

@@ -1,5 +1,5 @@
-import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { sessionDetails as baseSessionDetails, type SteelClient } from "../steel-client.js";
 import {
   emitProgress,
@@ -364,13 +364,6 @@ function validateExtraction(value: unknown, schema: ExtractionSchema, path: stri
   if (value !== null) {
     pushError(errors, path, "expected null");
   }
-}
-
-function trimAndNormalizeText(raw: string | null | undefined): string {
-  if (typeof raw !== "string") {
-    return "";
-  }
-  return raw.replace(/\u00a0/g, " ").trim();
 }
 
 async function extractWithBrowser(

@@ -3,22 +3,23 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import steelExtension from "../dist/index.js";
-import { navigateTool } from "../dist/tools/navigate.js";
-import { scrapeTool } from "../dist/tools/scrape.js";
-import { screenshotTool } from "../dist/tools/screenshot.js";
-import { pdfTool } from "../dist/tools/pdf.js";
-import { clickTool } from "../dist/tools/click.js";
-import { computerTool } from "../dist/tools/computer.js";
-import { typeTool } from "../dist/tools/type.js";
-import { fillFormTool } from "../dist/tools/fill-form.js";
-import { waitTool } from "../dist/tools/wait.js";
-import { extractTool } from "../dist/tools/extract.js";
-import { findElementsTool } from "../dist/tools/find-elements.js";
-import { scrollTool } from "../dist/tools/scroll.js";
-import { pinSessionTool, releaseSessionTool } from "../dist/tools/session-control.js";
-import { goBackTool, getUrlTool, getTitleTool } from "../dist/tools/navigation.js";
-import type { SteelSessionMode } from "../dist/session-mode.js";
+import steelExtension from "../src/index.js";
+import { navigateTool } from "../src/tools/navigate.js";
+import { snapshotTool } from "../src/tools/snapshot.js";
+import { scrapeTool } from "../src/tools/scrape.js";
+import { screenshotTool } from "../src/tools/screenshot.js";
+import { pdfTool } from "../src/tools/pdf.js";
+import { clickTool } from "../src/tools/click.js";
+import { computerTool } from "../src/tools/computer.js";
+import { typeTool } from "../src/tools/type.js";
+import { fillFormTool } from "../src/tools/fill-form.js";
+import { waitTool } from "../src/tools/wait.js";
+import { extractTool } from "../src/tools/extract.js";
+import { findElementsTool } from "../src/tools/find-elements.js";
+import { scrollTool } from "../src/tools/scroll.js";
+import { pinSessionTool, releaseSessionTool } from "../src/tools/session-control.js";
+import { goBackTool, getUrlTool, getTitleTool } from "../src/tools/navigation.js";
+import type { SteelSessionMode } from "../src/session-mode.js";
 
 type MockToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -36,7 +37,7 @@ type MockTool = {
     _toolCallId: string,
     _params: Record<string, unknown>,
     _signal: AbortSignal,
-    onUpdate: (update: string) => Promise<void>,
+    onUpdate: ((update: MockToolResult) => void) | undefined,
     _ctx: unknown
   ) => Promise<MockToolResult>;
 };
@@ -82,14 +83,6 @@ function assertTextResult(result: MockToolResult): void {
   assert.equal(typeof result.details?.sessionViewerUrl, "string");
 }
 
-function createUpdatesCollector() {
-  const updates: string[] = [];
-  const onUpdate = async (update: string) => {
-    updates.push(update);
-  };
-  return { updates, onUpdate };
-}
-
 function withEnv<T>(key: string, value: string | undefined, fn: () => T): T {
   const original = process.env[key];
   if (value === undefined) {
@@ -111,12 +104,12 @@ function withEnv<T>(key: string, value: string | undefined, fn: () => T): T {
 
 async function executeTool(tool: MockTool, params: Record<string, unknown>, session: MockSession): Promise<{
   result: MockToolResult;
-  updates: string[];
 }> {
   const client = createMockClient(session);
   const toolWithClient = (tool as unknown) as MockTool;
   const actual = {
     navigate: navigateTool,
+    snapshot: snapshotTool,
     scrape: scrapeTool,
     screenshot: screenshotTool,
     pdf: pdfTool,
@@ -136,6 +129,8 @@ async function executeTool(tool: MockTool, params: Record<string, unknown>, sess
   const boundTool =
     toolWithClient === actual.navigate
       ? navigateTool(client as unknown as never)
+      : toolWithClient === actual.snapshot
+        ? snapshotTool(client as unknown as never)
       : toolWithClient === actual.scrape
         ? scrapeTool(client as unknown as never)
         : toolWithClient === actual.screenshot
@@ -168,14 +163,20 @@ async function executeTool(tool: MockTool, params: Record<string, unknown>, sess
 
   assert.ok(boundTool, `Unable to bind mock client for tool ${toolWithClient.name}`);
 
-  const { updates, onUpdate } = createUpdatesCollector();
-  const result = await boundTool!.execute("call-001", params, new AbortController().signal, onUpdate, null);
-  return { result, updates };
+  const result = await boundTool!.execute(
+    "call-001",
+    params,
+    new AbortController().signal,
+    undefined,
+    {} as never
+  );
+  return { result: result as MockToolResult };
 }
 
 describe("Tool registration contracts", () => {
   const expectedTools = [
     "steel_navigate",
+    "steel_snapshot",
     "steel_scrape",
     "steel_screenshot",
     "steel_pdf",
@@ -196,6 +197,7 @@ describe("Tool registration contracts", () => {
 
   const requiredTopLevelParams: Record<string, string[]> = {
     steel_navigate: ["url"],
+    steel_snapshot: [],
     steel_scrape: [],
     steel_screenshot: [],
     steel_pdf: [],
@@ -302,31 +304,55 @@ describe("Tool registration contracts", () => {
     const pin = pinSessionTool(client as never, controller);
     const release = releaseSessionTool(client as never, controller);
 
-    const pinResult = await pin.execute(
+    const pinResult = (await pin.execute(
       "call-001",
       {},
       new AbortController().signal,
-      async () => {},
-      null
-    );
+      undefined,
+      {} as never
+    )) as MockToolResult;
 
     assert.equal(mode, "session");
     assert.match(pinResult.content[0].text, /Enabled Steel session persistence/i);
     assert.match(pinResult.content[0].text, /Current session: session-1/i);
     assert.equal(pinResult.details?.mode, "session");
 
-    const releaseResult = await release.execute(
+    const releaseResult = (await release.execute(
       "call-002",
       {},
       new AbortController().signal,
-      async () => {},
-      null
-    );
+      undefined,
+      {} as never
+    )) as MockToolResult;
 
     assert.equal(mode, "agent");
     assert.equal(closeCalls, 1);
     assert.match(releaseResult.content[0].text, /Released Steel session session-1/i);
     assert.equal(releaseResult.details?.mode, "agent");
+  });
+
+  it("surfaces explicit session release failures", async () => {
+    const client = createMockClient({ id: "session-1" });
+    const release = releaseSessionTool(client as never, {
+      getDefaultSessionMode: () => "session",
+      getSessionMode: () => "session",
+      setSessionMode: () => undefined,
+      closeSessions: async () => {
+        throw new Error("release unavailable");
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        release.execute(
+          "call-release",
+          {},
+          new AbortController().signal,
+          undefined,
+          {} as never
+        ),
+      /release unavailable/
+    );
   });
 
   it("executes navigation tool with normalized URL and response contract", async () => {
@@ -394,8 +420,8 @@ describe("Tool registration contracts", () => {
           "call-001",
           { url: "ftp://example.com" },
           new AbortController().signal,
-          async () => {},
-          null
+          undefined,
+          {} as never
         ),
       /Only http and https URLs are supported/,
       "expected non-http scheme to be rejected"
@@ -434,8 +460,8 @@ describe("Tool registration contracts", () => {
         "call-001",
         { url: "https://example.com" },
         new AbortController().signal,
-        async () => {},
-        null
+        undefined,
+        {} as never
       );
 
       assertTextResult(result as unknown as MockToolResult);
@@ -490,8 +516,8 @@ describe("Tool registration contracts", () => {
         "call-001",
         { url: "https://example.com" },
         new AbortController().signal,
-        async () => {},
-        null
+        undefined,
+        {} as never
       );
 
       assertTextResult(result as unknown as MockToolResult);
@@ -508,6 +534,25 @@ describe("Tool registration contracts", () => {
     }
   });
 
+  it("returns an ARIA snapshot for agent-oriented page inspection", async () => {
+    const session: MockSession = {
+      id: "session-1",
+      url: "https://snapshot.example/",
+      locator: (selector: string) => {
+        assert.equal(selector, "body");
+        return {
+          ariaSnapshot: async () => "- heading \"Example\"\n- button \"Continue\"",
+        };
+      },
+    };
+
+    const { result } = await executeTool(snapshotTool as unknown as MockTool, {}, session);
+    assertTextResult(result);
+    assert.match(result.content[0].text, /button "Continue"/);
+    assert.equal(result.details?.url, "https://snapshot.example/");
+    assert.equal(result.details?.truncated, false);
+  });
+
   it("executes scrape tool and returns extracted text", async () => {
     const session: MockSession = {
       id: "session-1",
@@ -520,8 +565,10 @@ describe("Tool registration contracts", () => {
     const { result } = await executeTool(scrapeTool as unknown as MockTool, { format: "text" }, session);
 
     assertTextResult(result);
-    assert.equal(result.content[0].text, "Title");
+    assert.match(result.content[0].text, /^Title\n\nFull scrape saved: /);
     assert.equal(result.details?.format, "text");
+    assert.equal(typeof result.details?.filePath, "string");
+    await rm(result.details?.filePath as string);
   });
 
   it("truncates scrape output when maxChars is exceeded", async () => {
@@ -547,6 +594,7 @@ describe("Tool registration contracts", () => {
     assert.equal(result.details?.maxChars, 200);
     assert.ok((result.content[0].text ?? "").includes("[truncated "));
     assert.ok((result.content[0].text ?? "").length <= 200);
+    await rm(result.details?.filePath as string);
   });
 
   it("supports short scrape excerpts below 200 characters", async () => {
@@ -570,6 +618,7 @@ describe("Tool registration contracts", () => {
     assert.equal(result.details?.maxChars, 150);
     assert.equal(result.details?.truncated, true);
     assert.ok((result.content[0].text ?? "").length <= 150);
+    await rm(result.details?.filePath as string);
   });
 
   it("captures screenshot artifact and returns artifact path", async () => {
@@ -598,16 +647,14 @@ describe("Tool registration contracts", () => {
 
     const { result } = await executeTool(pdfTool as unknown as MockTool, {}, session);
     assertTextResult(result);
-    assert.match(result.content[0].text, /^PDF saved: \.artifacts\/pdfs\/steel-pdf-/);
+    assert.match(result.content[0].text, /^PDF saved: .*steel-pdf-/);
 
     const filePath = result.details?.filePath;
     assert.equal(typeof filePath, "string");
     assert.ok(path.basename(filePath as string).startsWith("steel-pdf-"));
     assert.equal(path.extname(filePath as string), ".pdf");
 
-    const absoluteFilePath = result.details?.absoluteFilePath;
-    assert.equal(typeof absoluteFilePath, "string");
-    assert.ok(path.isAbsolute(absoluteFilePath as string));
+    assert.ok(path.isAbsolute(filePath as string));
 
     const artifact = result.details?.artifact as Record<string, unknown> | undefined;
     assert.ok(artifact);
@@ -623,11 +670,11 @@ describe("Tool registration contracts", () => {
     const calls: string[] = [];
     const session: MockSession = {
       id: "session-1",
-      waitForSelector: async (selector) => {
+      waitForSelector: async (selector: string) => {
         calls.push(`wait:${selector}`);
       },
       evaluate: async () => ({ found: true, visible: true, clickable: true, disabled: false }),
-      click: async (selector) => {
+      click: async (selector: string) => {
         calls.push(`click:${selector}`);
       },
     };
@@ -664,6 +711,38 @@ describe("Tool registration contracts", () => {
     assertTextResult(result);
     assert.equal(calls[0], "wait:text=Signup");
     assert.equal(calls[1], "click:text=Signup");
+  });
+
+  it("clicks by ARIA role and accessible name", async () => {
+    const calls: string[] = [];
+    const session: MockSession = {
+      id: "session-1",
+      page: {
+        getByRole: (role: string, options: { name?: string }) => ({
+          waitFor: async () => {
+            calls.push(`wait:${role}:${options.name}`);
+          },
+          click: async () => {
+            calls.push(`click:${role}:${options.name}`);
+          },
+        }),
+      },
+    };
+
+    const { result } = await executeTool(
+      clickTool as unknown as MockTool,
+      { role: "button", name: "Continue" },
+      session
+    );
+
+    assertTextResult(result);
+    assert.deepEqual(calls, ["wait:button:Continue", "click:button:Continue"]);
+    assert.deepEqual(result.details?.target, {
+      kind: "role",
+      role: "button",
+      name: "Continue",
+      exact: false,
+    });
   });
 
   it("retries click via captcha recovery when overlay blocks pointer events", async () => {
@@ -772,7 +851,7 @@ describe("Tool registration contracts", () => {
       id: "session-1",
       waitForSelector: async () => {},
       evaluate: async () => ({ found: true, editable: true }),
-      fill: async (_selector, text) => {
+      fill: async (_selector: string, text: string) => {
         filledValue = text;
       },
     };
@@ -792,13 +871,13 @@ describe("Tool registration contracts", () => {
     const filled: string[] = [];
     const session: MockSession = {
       id: "session-1",
-      waitForSelector: async (selector) => {
+      waitForSelector: async (selector: string) => {
         if (selector === ".missing") {
           throw new Error("No element matched selector: .missing");
         }
       },
       evaluate: async (_selector: string) => ({ found: true, editable: true }),
-      fill: async (selector) => {
+      fill: async (selector: string) => {
         filled.push(selector);
       },
     };
@@ -828,7 +907,7 @@ describe("Tool registration contracts", () => {
       id: "session-1",
       waitForSelector: async () => {},
       evaluate: async () => true,
-      fill: async (_selector, value) => {
+      fill: async (_selector: string, value: string) => {
         values.push(value);
       },
     };
@@ -1047,8 +1126,8 @@ describe("Tool registration contracts", () => {
           "call-001",
           {},
           new AbortController().signal,
-          async () => {},
-          null
+          undefined,
+          {} as never
         ),
       /about:blank.*STEEL_SESSION_MODE=session/i
     );
@@ -1068,8 +1147,8 @@ describe("Tool registration contracts", () => {
           "call-001",
           { format: "text" },
           new AbortController().signal,
-          async () => {},
-          null
+          undefined,
+          {} as never
         ),
       /about:blank.*STEEL_SESSION_MODE=session/i
     );
@@ -1089,8 +1168,8 @@ describe("Tool registration contracts", () => {
           "call-001",
           {},
           new AbortController().signal,
-          async () => {},
-          null
+          undefined,
+          {} as never
         ),
       /about:blank.*STEEL_SESSION_MODE=session/i
     );
@@ -1106,10 +1185,10 @@ describe("Tool registration contracts", () => {
           "call-001",
           { selector: "" },
           new AbortController().signal,
-          async () => {},
-          null
+          undefined,
+          {} as never
         ),
-      /Selector cannot be empty/,
+      /Provide one target: selector, role, or text/,
       "expected selector validation failure"
     );
   });
@@ -1124,8 +1203,8 @@ describe("Tool registration contracts", () => {
           "call-001",
           { selector: "#item", timeout: 0 },
           new AbortController().signal,
-          async () => {},
-          null
+          undefined,
+          {} as never
         ),
       /timeout must be a positive number/,
       "expected timeout validation failure"
@@ -1154,8 +1233,8 @@ describe("Tool registration contracts", () => {
           "call-001",
           { schema },
           new AbortController().signal,
-          async () => {},
-          null
+          undefined,
+          {} as never
         ),
       /Extraction result does not match requested schema/,
       "expected extraction validation failure"
@@ -1176,8 +1255,8 @@ describe("Tool registration contracts", () => {
       "call-001",
       { selector: "#slow", timeout: 60_000 },
       controller.signal,
-      async () => {},
-      null
+      undefined,
+      {} as never
     );
     setTimeout(() => controller.abort(), 10);
 

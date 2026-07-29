@@ -5,19 +5,19 @@ Prompts for proving the extension works end to end inside `pi`. One prompt per l
 Load the extension:
 
 ```bash
-pi -e /Users/nikola/dev/steel/steel-pi/dist/index.js
-```
-
-Or from this repo:
-
-```bash
-pi -e .
+pi --no-extensions -e .
 ```
 
 Unit tests:
 
 ```bash
 npm test
+```
+
+Live SDK/CDP smoke test:
+
+```bash
+STEEL_API_KEY=... npm run test:live
 ```
 
 ## Navigation and page identity
@@ -45,6 +45,7 @@ Open https://example.com and tell me the visible text content in under 200 chara
 
 ## Finding and clicking
 
+Open https://news.ycombinator.com, take an accessibility snapshot, then identify the login link by role and accessible name.
 Open https://news.ycombinator.com and find the login link. Give me the top selector candidates and why you chose each.
 Open https://news.ycombinator.com, click the login link, and tell me the new page title and URL.
 Open https://news.ycombinator.com, click the login link, then go back, and prove you are on the front page again.

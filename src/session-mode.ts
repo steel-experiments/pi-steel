@@ -3,7 +3,7 @@ export type SteelSessionMode = "turn" | "agent" | "session";
 export function resolveSessionMode(): SteelSessionMode {
   const rawValue = process.env.STEEL_SESSION_MODE?.trim().toLowerCase();
   if (!rawValue) {
-    return "agent";
+    return "session";
   }
 
   if (rawValue === "turn" || rawValue === "agent" || rawValue === "session") {
@@ -11,8 +11,8 @@ export function resolveSessionMode(): SteelSessionMode {
   }
 
   console.warn(
-    `[steel] unsupported STEEL_SESSION_MODE="${rawValue}", falling back to "agent"`
+    `[steel] unsupported STEEL_SESSION_MODE="${rawValue}", falling back to "session"`
   );
-  return "agent";
+  return "session";
 }
 

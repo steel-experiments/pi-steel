@@ -1,5 +1,5 @@
-import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { sessionDetails, type SteelClient } from "../steel-client.js";
 import { runWithCaptchaRecovery, type CaptchaRecoverySummary } from "./captcha-guard.js";
 import {
@@ -13,6 +13,13 @@ import {
   MAX_TOOL_TIMEOUT_MS,
   resolveToolTimeoutMs,
 } from "./tool-settings.js";
+import {
+  describeTarget,
+  getTargetLocator,
+  resolveTarget,
+  targetParameterProperties,
+  type BrowserTargetInput,
+} from "./target.js";
 
 type WaitState = "attached" | "visible";
 
@@ -59,226 +66,19 @@ function compactCaptchaRecovery(summary: CaptchaRecoverySummary) {
   };
 }
 
-function normalizeSelector(selector: string): string {
-  const trimmed = selector.trim();
-  if (!trimmed) {
-    throw new Error("Selector cannot be empty.");
-  }
-  return trimmed;
-}
-
 function normalizeTimeout(timeoutMs?: number): number {
   return resolveToolTimeoutMs(timeoutMs);
-}
-
-function getLocator(
-  session: SessionLike,
-  selector: string
-):
-  | {
-      waitFor?: (options?: { state?: WaitState; timeout?: number }) => Promise<unknown>;
-      isVisible?: () => Promise<boolean>;
-      isEnabled?: () => Promise<boolean>;
-      click?: (options?: { timeout?: number }) => Promise<unknown>;
-    }
-  | undefined {
-  if (typeof session.locator === "function") {
-    return session.locator(selector);
-  }
-
-  if (typeof session.page?.locator === "function") {
-    return session.page.locator(selector);
-  }
-
-  return undefined;
-}
-
-function supportsCssSelectorFallback(selector: string): boolean {
-  const normalized = selector.trim();
-  if (!normalized) {
-    return false;
-  }
-  if (
-    normalized.includes(">>") ||
-    normalized.includes("text=") ||
-    normalized.includes("xpath=") ||
-    normalized.includes("nth=") ||
-    normalized.includes(":has-text(") ||
-    normalized.includes(":text(") ||
-    normalized.includes(":contains(")
-  ) {
-    return false;
-  }
-  return true;
-}
-
-async function waitForTarget(
-  session: SessionLike,
-  selector: string,
-  timeoutMs: number,
-  signal: AbortSignal | undefined
-): Promise<void> {
-  throwIfAborted(signal);
-  const locator = getLocator(session, selector);
-  if (locator?.waitFor) {
-    await withAbortSignal(
-      locator.waitFor({ state: "visible", timeout: timeoutMs }),
-      signal
-    );
-    return;
-  }
-
-  if (typeof session.waitForSelector === "function") {
-    await withAbortSignal(
-      session.waitForSelector(selector, { state: "visible", timeout: timeoutMs }),
-      signal
-    );
-    return;
-  }
-
-  if (typeof session.page?.waitForSelector === "function") {
-    await withAbortSignal(
-      session.page.waitForSelector(selector, { state: "visible", timeout: timeoutMs }),
-      signal
-    );
-  }
-}
-
-async function ensureClickable(
-  session: SessionLike,
-  selector: string,
-  signal: AbortSignal | undefined
-): Promise<void> {
-  throwIfAborted(signal);
-  const locator = getLocator(session, selector);
-  if (locator) {
-    if (typeof locator.isVisible === "function") {
-      const visible = await withAbortSignal(locator.isVisible(), signal);
-      if (!visible) {
-        throw new Error(`Element is not visible: ${selector}`);
-      }
-    }
-    if (typeof locator.isEnabled === "function") {
-      const enabled = await withAbortSignal(locator.isEnabled(), signal);
-      if (!enabled) {
-        throw new Error(`Element is disabled and cannot be clicked: ${selector}`);
-      }
-    }
-    return;
-  }
-
-  if (!supportsCssSelectorFallback(selector)) {
-    return;
-  }
-
-  const evaluate = session.evaluate ?? session.page?.evaluate;
-  if (typeof evaluate !== "function") {
-    return;
-  }
-
-  const result = await withAbortSignal(
-    evaluate(
-    (input: { selector: string }) => {
-      const element = document.querySelector(input.selector) as HTMLElement | null;
-      if (!element) {
-        return { found: false, clickable: false, disabled: false };
-      }
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      const visible =
-        rect.width > 0 &&
-        rect.height > 0 &&
-        style.display !== "none" &&
-        style.visibility !== "hidden" &&
-        Number.parseFloat(style.opacity) > 0;
-      const disabled =
-        (element as HTMLInputElement).disabled === true ||
-        element.getAttribute("aria-disabled") === "true";
-      const clickable = visible && !disabled && style.pointerEvents !== "none";
-      return { found: true, clickable, disabled };
-    },
-    { selector }
-  ),
-    signal
-  );
-
-  if (!result || typeof result !== "object") {
-    return;
-  }
-
-  const found = Boolean((result as Record<string, unknown>).found);
-  const clickable = Boolean((result as Record<string, unknown>).clickable);
-  const disabled = Boolean((result as Record<string, unknown>).disabled);
-  if (!found) {
-    throw new Error(`No element matched selector: ${selector}`);
-  }
-  if (disabled) {
-    throw new Error(`Element is disabled and cannot be clicked: ${selector}`);
-  }
-  if (!clickable) {
-    throw new Error(`Element is not clickable: ${selector}`);
-  }
-}
-
-async function invokeClick(
-  session: SessionLike,
-  selector: string,
-  timeoutMs: number,
-  signal: AbortSignal | undefined
-): Promise<void> {
-  throwIfAborted(signal);
-  const locator = getLocator(session, selector);
-  if (locator?.click) {
-    await withAbortSignal(locator.click({ timeout: timeoutMs }), signal);
-    return;
-  }
-
-  if (typeof session.click === "function") {
-    await withAbortSignal(session.click(selector, { timeout: timeoutMs }), signal);
-    return;
-  }
-
-  if (typeof session.page?.click === "function") {
-    await withAbortSignal(
-      session.page.click(selector, { timeout: timeoutMs }),
-      signal
-    );
-    return;
-  }
-
-  const pageEvaluate = session.evaluate ?? session.page?.evaluate;
-  if (typeof pageEvaluate === "function" && supportsCssSelectorFallback(selector)) {
-    const clicked = await withAbortSignal(
-      pageEvaluate(
-        (input: { selector: string }) => {
-          const element = document.querySelector(input.selector) as HTMLElement | null;
-          if (!element) {
-            return false;
-          }
-          element.click();
-          return true;
-        },
-        { selector }
-      ),
-      signal
-    );
-
-    if (clicked) {
-      return;
-    }
-  }
-
-  throw new Error("Session does not support click operations.");
 }
 
 export function clickTool(client: SteelClient): ToolDefinition<any, any> {
   return {
     name: "steel_click",
     label: "Click",
-    description: "Click an element in the page",
+    description:
+      "Click an element by CSS selector, ARIA role/name, or visible text. Prefer role/name after steel_snapshot.",
     parameters: Type.Object(
       {
-        selector: Type.String({ description: "CSS selector of the element to click" }),
+        ...targetParameterProperties,
         timeout: Type.Optional(
           Type.Integer({
             minimum: 100,
@@ -291,17 +91,18 @@ export function clickTool(client: SteelClient): ToolDefinition<any, any> {
 
     async execute(
       _toolCallId: string,
-      params: { selector: string; timeout?: number },
+      params: BrowserTargetInput & { timeout?: number },
       signal: AbortSignal | undefined,
       onUpdate: ToolProgressUpdater,
       _ctx: ExtensionContext
     ): Promise<{ content: Array<{ type: "text"; text: string }>; details: object }> {
       return withToolError("steel_click", async () => {
         throwIfAborted(signal);
-        const selector = normalizeSelector(params.selector);
+        const target = resolveTarget(params);
+        const targetLabel = describeTarget(target);
         const timeoutMs = normalizeTimeout(params.timeout);
 
-        await emitProgress(onUpdate, "steel_click", `Preparing click for ${selector}`);
+        await emitProgress(onUpdate, "steel_click", `Preparing click for ${targetLabel}`);
         const session = (await withAbortSignal(
           client.getOrCreateSession(),
           signal
@@ -310,25 +111,38 @@ export function clickTool(client: SteelClient): ToolDefinition<any, any> {
         const captchaRecovery = await runWithCaptchaRecovery({
           session,
           context: "steel_click",
-          actionLabel: `click ${selector}`,
+          actionLabel: `click ${targetLabel}`,
           onUpdate,
           signal,
           operation: async () => {
             throwIfAborted(signal);
-            await waitForTarget(session, selector, timeoutMs, signal);
-            throwIfAborted(signal);
-            await ensureClickable(session, selector, signal);
-            throwIfAborted(signal);
-            await invokeClick(session, selector, timeoutMs, signal);
+            const locator = getTargetLocator(session, target);
+            if (locator.waitFor) {
+              await withAbortSignal(
+                locator.waitFor({ state: "visible", timeout: timeoutMs }),
+                signal
+              );
+            }
+            if (locator.isVisible && !(await withAbortSignal(locator.isVisible(), signal))) {
+              throw new Error(`Element is not visible: ${targetLabel}`);
+            }
+            if (locator.isEnabled && !(await withAbortSignal(locator.isEnabled(), signal))) {
+              throw new Error(`Element is disabled: ${targetLabel}`);
+            }
+            if (!locator.click) {
+              throw new Error(`Session does not support clicking ${targetLabel}.`);
+            }
+            await withAbortSignal(locator.click({ timeout: timeoutMs }), signal);
           },
         });
         await emitProgress(onUpdate, "steel_click", "Click succeeded");
 
         return {
-          content: [{ type: "text", text: `Clicked element ${selector}` }],
+          content: [{ type: "text", text: `Clicked ${targetLabel}` }],
           details: {
             ...sessionDetails(session),
-            selector,
+            target,
+            selector: target.kind === "selector" ? target.selector : null,
             timeoutMs,
             clicked: true,
             captchaRecovery: compactCaptchaRecovery(captchaRecovery),

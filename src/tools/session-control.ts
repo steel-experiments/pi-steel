@@ -1,5 +1,5 @@
-import type { ExtensionContext, ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type { SteelSessionMode } from "../session-mode.js";
 import type { SteelClient } from "../steel-client.js";
 import { withToolError, type ToolProgressUpdater } from "./tool-runtime.js";

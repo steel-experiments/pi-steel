@@ -1,4 +1,4 @@
-import type { AgentToolUpdateCallback } from "@mariozechner/pi-coding-agent";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 
 export type ToolErrorCategory =
   | "validation"
@@ -122,8 +122,18 @@ export function toolErrorMessage(context: string, error: unknown): string {
   return `${context}: ${label}. ${message}. Retry guidance: ${guidance}`;
 }
 
+export class SteelToolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SteelToolError";
+  }
+}
+
 export function toolError(context: string, error: unknown): Error {
-  return new Error(toolErrorMessage(context, error));
+  if (error instanceof SteelToolError) {
+    return error;
+  }
+  return new SteelToolError(toolErrorMessage(context, error));
 }
 
 function abortError(message = ABORT_ERROR_MESSAGE): Error {
@@ -215,11 +225,17 @@ export function withToolError<T>(
       if (isAbortError(error) || signal?.aborted) {
         throw abortError(`${context}: ${ABORT_ERROR_MESSAGE}`);
       }
+      if (error instanceof SteelToolError) {
+        throw error;
+      }
       throw toolError(context, error);
     });
   } catch (error: unknown) {
     if (isAbortError(error) || signal?.aborted) {
       throw abortError(`${context}: ${ABORT_ERROR_MESSAGE}`);
+    }
+    if (error instanceof SteelToolError) {
+      throw error;
     }
     throw toolError(context, error);
   }

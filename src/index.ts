@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { resolveSessionMode, type SteelSessionMode } from "./session-mode.js";
 import { SteelClient } from "./steel-client.js";
@@ -12,6 +12,7 @@ import { navigateTool } from "./tools/navigate.js";
 import { pdfTool } from "./tools/pdf.js";
 import { scrapeTool } from "./tools/scrape.js";
 import { screenshotTool } from "./tools/screenshot.js";
+import { snapshotTool } from "./tools/snapshot.js";
 import { scrollTool } from "./tools/scroll.js";
 import { pinSessionTool, releaseSessionTool } from "./tools/session-control.js";
 import { typeTool } from "./tools/type.js";
@@ -28,9 +29,6 @@ export default function steelExtension(pi: ExtensionAPI): void {
       closingSessions = (async () => {
         try {
           await steelClient.closeAllSessions();
-        } catch (error: unknown) {
-          // Cleanup failures should not break the main agent response path.
-          console.warn(`[steel] session cleanup failed (${reason})`, error);
         } finally {
           closingSessions = null;
         }
@@ -38,6 +36,15 @@ export default function steelExtension(pi: ExtensionAPI): void {
     }
 
     await closingSessions;
+  };
+
+  const closeSessionsSafely = async (reason: string) => {
+    try {
+      await closeSessions(reason);
+    } catch (error) {
+      // Lifecycle cleanup must not replace the agent's primary response.
+      console.warn(`[steel] session cleanup failed (${reason})`, error);
+    }
   };
 
   const sessionController = {
@@ -51,6 +58,7 @@ export default function steelExtension(pi: ExtensionAPI): void {
 
   const tools = [
     navigateTool(steelClient),
+    snapshotTool(steelClient),
     scrapeTool(steelClient),
     screenshotTool(steelClient),
     pdfTool(steelClient),
@@ -75,29 +83,29 @@ export default function steelExtension(pi: ExtensionAPI): void {
 
   pi.on("turn_end", async () => {
     if (sessionMode === "turn") {
-      await closeSessions("turn_end");
+      await closeSessionsSafely("turn_end");
     }
   });
 
   pi.on("agent_end", async () => {
     if (sessionMode === "agent") {
-      await closeSessions("agent_end");
+      await closeSessionsSafely("agent_end");
     }
   });
 
   // Defensive cleanup for interactive session switches/forks.
   pi.on("session_before_switch", async () => {
-    await closeSessions("session_before_switch");
+    await closeSessionsSafely("session_before_switch");
   });
 
   pi.on("session_shutdown", async () => {
-    await closeSessions("session_shutdown");
+    await closeSessionsSafely("session_shutdown");
   });
 
   const shutdownApi = pi as ExtensionAPI & {
     onShutdown?: (handler: () => Promise<void> | void) => void;
   };
   shutdownApi.onShutdown?.(async () => {
-    await closeSessions("onShutdown");
+    await closeSessionsSafely("onShutdown");
   });
 }
